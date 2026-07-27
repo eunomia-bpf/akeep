@@ -20,7 +20,7 @@ use crate::providers::Provider;
 use crate::source::{PreparedFile, prepare_files};
 use crate::vault::Vault;
 
-const ARCHIVE_BATCH_CHUNKS: usize = 8;
+const MAX_ARCHIVE_BATCH_CHUNKS: usize = 24;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BackupReport {
@@ -289,10 +289,14 @@ fn archive_file(
     let mut chunks = Vec::new();
     let mut size = 0_u64;
     let mut buffer = vec![0_u8; chunk_size];
+    let batch_chunks = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(4)
+        .clamp(4, MAX_ARCHIVE_BATCH_CHUNKS);
 
     loop {
-        let mut batch = Vec::with_capacity(ARCHIVE_BATCH_CHUNKS);
-        for _ in 0..ARCHIVE_BATCH_CHUNKS {
+        let mut batch = Vec::with_capacity(batch_chunks);
+        for _ in 0..batch_chunks {
             let read = read_full_chunk(&mut reader, &mut buffer)?;
             if read == 0 {
                 break;
