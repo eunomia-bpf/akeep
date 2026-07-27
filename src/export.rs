@@ -116,13 +116,13 @@ fn write_markdown(
     output: &mut File,
 ) -> Result<(u64, u64, u64)> {
     writeln!(output, "# Akeep export\n")?;
-    writeln!(output, "- Recovery point: `{}`", manifest.snapshot_id)?;
+    writeln!(output, "- Commit: `{}`", manifest.snapshot_id)?;
     writeln!(output, "- Created: `{}`", manifest.created_at.to_rfc3339())?;
     writeln!(output, "- Host: `{}`", escape_inline(&manifest.hostname))?;
     writeln!(output, "- Files in manifest: `{}`\n", manifest.files.len())?;
     writeln!(
         output,
-        "> This is a readable view. Use JSON export or `akeep recover` for an exact representation.\n"
+        "> This is a readable view. Use JSON export or `akeep checkout` for an exact representation.\n"
     )?;
 
     let mut included = 0_u64;
@@ -199,7 +199,7 @@ pub(crate) fn create_output(vault: &Vault, path: &Path) -> Result<File> {
             .with_context(|| format!("failed to resolve Akeep path {}", protected.display()))?;
         if paths_overlap(&protected, &resolved_output) {
             bail!(
-                "export output {} overlaps vault/state path {}",
+                "export output {} overlaps repository/state path {}",
                 path.display(),
                 protected.display()
             );

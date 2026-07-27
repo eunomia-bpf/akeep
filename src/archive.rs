@@ -165,12 +165,12 @@ pub fn backup(config_path: &Path, config: &Config, message: Option<&str>) -> Res
     }
 
     let vault = Vault::open(config)?;
-    let _lock = vault.acquire_backup_lock()?;
+    let _lock = vault.acquire_write_lock()?;
     let parent = vault.latest_snapshot_id()?;
-    let staging = vault.staging_directory()?;
+    let staging = vault.commit_staging_directory()?;
     let prepared = prepare_files(config, staging.path())?;
     if prepared.is_empty() {
-        bail!("no provider files were discovered; refusing to publish an empty recovery point");
+        bail!("no provider files were discovered; refusing to publish an empty commit");
     }
 
     let created_at = Utc::now();
@@ -257,7 +257,7 @@ pub fn backup(config_path: &Path, config: &Config, message: Option<&str>) -> Res
 
 pub fn snapshots(config: &Config) -> Result<Vec<SnapshotInfo>> {
     let vault = Vault::open(config)?;
-    let manifests = vault.list_manifests()?;
+    let manifests = vault.history_manifests()?;
     let mut snapshots = Vec::with_capacity(manifests.len());
     for manifest in manifests {
         manifest.validate(config.vault.id)?;
@@ -304,7 +304,6 @@ pub fn snapshots(config: &Config) -> Result<Vec<SnapshotInfo>> {
             full_verified_at,
         });
     }
-    snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.created_at));
     Ok(snapshots)
 }
 
@@ -353,12 +352,12 @@ pub fn recover(
     if selected.is_empty() {
         if let Some(provider) = provider {
             bail!(
-                "recovery point {} contains no {} files",
+                "commit {} contains no {} files",
                 manifest.snapshot_id,
                 provider
             );
         }
-        bail!("recovery point {} contains no files", manifest.snapshot_id);
+        bail!("commit {} contains no files", manifest.snapshot_id);
     }
     let files = u64::try_from(selected.len()).context("selected file count exceeds u64")?;
     let logical_bytes = selected.iter().try_fold(0_u64, |total, record| {
@@ -499,6 +498,7 @@ pub fn diff(config: &Config, from: &str, to: &str) -> Result<DiffReport> {
 pub fn clone_repository(config: &Config, destination: &Path) -> Result<CloneReport> {
     let started = Instant::now();
     let source = Vault::open(config)?;
+    let _lock = source.acquire_write_lock()?;
     let head = source
         .latest_snapshot_id()?
         .context("repository has no commits to clone")?;
@@ -527,12 +527,20 @@ pub fn clone_repository(config: &Config, destination: &Path) -> Result<CloneRepo
     config::write_new(&config_path, &cloned_config)?;
 
     let clone = Vault::open(&cloned_config)?;
-    let manifest = clone.load_manifest("HEAD")?;
-    manifest.validate(cloned_config.vault.id)?;
-    if manifest.snapshot_id != head {
-        bail!("cloned HEAD is {}, expected {}", manifest.snapshot_id, head);
+    let history = clone.history_manifests()?;
+    let cloned_head = history
+        .first()
+        .context("cloned repository has no commits")?;
+    if cloned_head.snapshot_id != head {
+        bail!(
+            "cloned HEAD is {}, expected {}",
+            cloned_head.snapshot_id,
+            head
+        );
     }
-    verify_object_presence(&clone, &manifest)?;
+    for manifest in &history {
+        verify_object_presence(&clone, manifest)?;
+    }
     fs::remove_file(&marker)
         .with_context(|| format!("failed to remove clone marker {}", marker.display()))?;
 
@@ -767,7 +775,7 @@ fn prepare_recovery_target(
             .with_context(|| format!("failed to resolve {}", protected.display()))?;
         if paths_overlap(&resolved, &resolved_target) {
             bail!(
-                "recovery target {} overlaps vault/state path {}; choose a separate directory",
+                "checkout target {} overlaps repository/state path {}; choose a separate directory",
                 target.display(),
                 protected.display()
             );
@@ -777,12 +785,12 @@ fn prepare_recovery_target(
         let metadata = fs::symlink_metadata(target)?;
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             bail!(
-                "recovery target must be a real directory: {}",
+                "checkout target must be a real directory: {}",
                 target.display()
             );
         }
         if fs::read_dir(target)?.next().is_some() {
-            bail!("recovery target is not empty: {}", target.display());
+            bail!("checkout target is not empty: {}", target.display());
         }
     } else {
         create_private_directory(target)?;

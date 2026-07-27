@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
@@ -91,19 +92,20 @@ impl Vault {
         self.storage.description()
     }
 
-    pub fn acquire_backup_lock(&self) -> Result<VaultLock> {
+    pub fn acquire_write_lock(&self) -> Result<VaultLock> {
         let lock_path = self.state_root.join("locks").join("backup.lock");
         let file = open_private_rw(&lock_path)?;
-        file.try_lock_exclusive()
-            .with_context(|| format!("another backup holds {}", lock_path.display()))?;
+        file.try_lock_exclusive().with_context(|| {
+            format!("another repository operation holds {}", lock_path.display())
+        })?;
         Ok(VaultLock { _file: file })
     }
 
-    pub fn staging_directory(&self) -> Result<tempfile::TempDir> {
+    pub fn commit_staging_directory(&self) -> Result<tempfile::TempDir> {
         tempfile::Builder::new()
-            .prefix("backup-")
+            .prefix("commit-")
             .tempdir_in(self.state_root.join("staging"))
-            .context("failed to create private backup staging directory")
+            .context("failed to create private commit staging directory")
     }
 
     pub fn store_chunk(&self, raw: &[u8], compression_level: i32) -> Result<StoredChunk> {
@@ -316,6 +318,28 @@ impl Vault {
                     .with_context(|| format!("failed to parse manifest {key}"))
             })
             .collect()
+    }
+
+    pub fn history_manifests(&self) -> Result<Vec<Manifest>> {
+        let Some(mut snapshot_id) = self.latest_snapshot_id()? else {
+            return Ok(Vec::new());
+        };
+        let mut manifests = Vec::new();
+        let mut seen = HashSet::new();
+        loop {
+            if !seen.insert(snapshot_id.clone()) {
+                bail!("commit history contains a parent cycle at {snapshot_id}");
+            }
+            let manifest = self.load_manifest_by_id(&snapshot_id)?;
+            manifest.validate(self.vault_id)?;
+            let parent = manifest.parent.clone();
+            manifests.push(manifest);
+            let Some(parent) = parent else {
+                break;
+            };
+            snapshot_id = parent;
+        }
+        Ok(manifests)
     }
 
     pub fn copy_repository_to(&self, destination: &Path) -> Result<RepositoryCopyStats> {

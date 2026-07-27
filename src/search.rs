@@ -38,13 +38,12 @@ pub struct SearchResult {
 
 pub fn rebuild(config: &Config) -> Result<IndexReport> {
     let vault = Vault::open(config)?;
-    let mut manifests = vault.list_manifests()?;
+    let manifests = vault.history_manifests()?;
     for manifest in &manifests {
         manifest.validate(config.vault.id)?;
     }
-    manifests.sort_by_key(|manifest| std::cmp::Reverse(manifest.created_at));
     if manifests.is_empty() {
-        bail!("no recovery points are available to index");
+        bail!("no commits are available to index");
     }
 
     let index_path = index_path(config);

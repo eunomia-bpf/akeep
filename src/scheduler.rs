@@ -354,6 +354,7 @@ mod tests {
 
         assert!(service.contains("ExecStart=\"/opt/Akeep $$HOME/%%i/akeep\""));
         assert!(service.contains("Akeep \\\"primary\\\""));
+        assert!(service.contains("config.toml\" commit\n"));
         assert!(
             service
                 .contains("ConditionPathExists=/home/user/Akeep\\x20\\x22primary\\x22/config.toml")

@@ -237,7 +237,7 @@ fn render(
     let mut output = String::new();
     output.push_str("# Akeep semantic handoff\n\n");
     output.push_str(&format!(
-        "- From: `{}`\n- For: `{}`\n- Recovery point: `{snapshot_id}`\n- Repository: `{}`\n\n",
+        "- From: `{}`\n- For: `{}`\n- Commit: `{snapshot_id}`\n- Repository: `{}`\n\n",
         request.from,
         request.for_agent,
         repository.root.display()

@@ -27,7 +27,7 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Initialize a new Akeep vault.
+    /// Initialize a new Akeep repository.
     Init(InitArgs),
 
     /// Inspect the active configuration.
@@ -57,7 +57,7 @@ pub enum Command {
     /// Copy the active repository into a self-contained local bundle.
     Clone(CloneArgs),
 
-    /// Manage an optional automatic backup schedule.
+    /// Manage an optional automatic commit schedule.
     Schedule {
         #[command(subcommand)]
         command: ScheduleCommand,
@@ -72,7 +72,7 @@ pub enum Command {
     /// Search indexed Claude Code and Codex history.
     Search(SearchArgs),
 
-    /// Export a recovery point as readable Markdown or exact JSON/base64.
+    /// Export a committed version as readable Markdown or exact JSON/base64.
     Export(ExportArgs),
 
     /// Create a reviewed Claude Code ↔ Codex handoff bundle.
@@ -81,11 +81,11 @@ pub enum Command {
 
 #[derive(Debug, Args)]
 pub struct InitArgs {
-    /// Filesystem directory that will hold the vault.
+    /// Filesystem directory that will hold the repository.
     #[arg(long, value_name = "DIRECTORY", conflicts_with = "s3_bucket")]
     pub target: Option<PathBuf>,
 
-    /// S3 bucket that will hold the vault.
+    /// S3 bucket that will hold the repository.
     #[arg(long, value_name = "BUCKET", conflicts_with = "target")]
     pub s3_bucket: Option<String>,
 
@@ -369,7 +369,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 if let Some(path) = generated_identity {
                     let _ = std::fs::remove_file(path);
                 }
-                return Err(error).context("vault initialization failed and was rolled back");
+                return Err(error).context("repository initialization failed and was rolled back");
             }
             println!("Initialized Akeep repository {}", created.vault.id);
             println!("Config: {}", config_path.display());
@@ -381,7 +381,7 @@ pub fn run(cli: Cli) -> Result<()> {
                     println!("Target: s3://{bucket}/{prefix}/");
                     if created.encryption.mode == EncryptionMode::None {
                         println!(
-                            "Warning: this remote vault is not client-side encrypted; the storage operator can read it."
+                            "Warning: this remote repository is not client-side encrypted; the storage operator can read it."
                         );
                     }
                 }
@@ -582,10 +582,7 @@ pub fn run(cli: Cli) -> Result<()> {
                         println!("{}", serde_json::to_string_pretty(&report)?);
                     } else {
                         println!("Rebuilt search index: {}", report.index_path.display());
-                        println!(
-                            "Recovery points scanned: {}",
-                            report.recovery_points_scanned
-                        );
+                        println!("Commits scanned: {}", report.recovery_points_scanned);
                         println!("Files: {}", report.files);
                         println!("Indexed lines: {}", report.lines);
                         println!("Logical bytes: {}", report.logical_bytes);
@@ -615,7 +612,7 @@ pub fn run(cli: Cli) -> Result<()> {
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
-                println!("Exported recovery point {}", report.snapshot_id);
+                println!("Exported commit {}", report.snapshot_id);
                 println!("Output: {}", report.output.display());
                 println!("Files included: {}", report.files_included);
                 println!("Files omitted: {}", report.files_omitted);
@@ -643,7 +640,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
                 println!(
-                    "Created {} → {} handoff from recovery point {}",
+                    "Created {} → {} handoff from commit {}",
                     report.from, report.for_agent, report.snapshot_id
                 );
                 println!("Output: {}", report.output.display());

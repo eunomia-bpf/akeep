@@ -405,7 +405,7 @@ fn recover_refuses_a_target_inside_the_vault() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("overlaps vault"));
+        .stderr(predicate::str::contains("overlaps repository/state"));
     assert!(!recovery.exists());
 }
 
@@ -605,7 +605,7 @@ fn commit_history_supports_messages_head_ancestors_and_clean_commands() {
         b"first version"
     );
 
-    for old_command in ["doctor", "backup", "snapshots", "verify", "recover"] {
+    for old_command in ["add", "doctor", "backup", "snapshots", "verify", "recover"] {
         Command::cargo_bin("akeep")
             .unwrap()
             .arg(old_command)
