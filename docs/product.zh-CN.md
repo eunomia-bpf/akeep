@@ -186,7 +186,8 @@ Akeep 的楔子应该是：
 副标题：
 
 > **Back up, verify, and recover Claude Code, Codex, and other coding-agent
-> work—without giving a storage provider the plaintext.**
+> work to local disk or your own storage—with optional client-side encryption
+> before upload.**
 
 第三句应直接给证据：
 
