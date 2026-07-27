@@ -3,7 +3,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use rusqlite::backup::Backup;
+use rusqlite::backup::{Backup, StepResult};
 use rusqlite::{Connection, OpenFlags};
 use walkdir::WalkDir;
 
@@ -193,15 +193,57 @@ fn snapshot_sqlite(source: &Path, destination: &Path) -> Result<()> {
     let source_connection =
         Connection::open_with_flags(source, OpenFlags::SQLITE_OPEN_READ_ONLY)
             .with_context(|| format!("failed to open SQLite source {}", source.display()))?;
+    source_connection
+        .execute_batch("BEGIN DEFERRED")
+        .with_context(|| format!("failed to start SQLite snapshot for {}", source.display()))?;
+    let _: i64 = source_connection
+        .query_row("SELECT COUNT(*) FROM sqlite_schema", [], |row| row.get(0))
+        .with_context(|| format!("failed to pin SQLite snapshot for {}", source.display()))?;
     let mut destination_connection = Connection::open(destination)
         .with_context(|| format!("failed to create SQLite snapshot {}", destination.display()))?;
+    destination_connection
+        .pragma_update(None, "journal_mode", "OFF")
+        .with_context(|| {
+            format!(
+                "failed to configure SQLite snapshot {}",
+                destination.display()
+            )
+        })?;
+    destination_connection
+        .pragma_update(None, "synchronous", "OFF")
+        .with_context(|| {
+            format!(
+                "failed to configure SQLite snapshot {}",
+                destination.display()
+            )
+        })?;
     {
         let backup = Backup::new(&source_connection, &mut destination_connection)
             .with_context(|| format!("failed to start SQLite backup for {}", source.display()))?;
-        backup
-            .run_to_completion(128, Duration::from_millis(10), None)
-            .with_context(|| format!("SQLite backup failed for {}", source.display()))?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(5 * 60);
+        loop {
+            match backup
+                .step(-1)
+                .with_context(|| format!("SQLite backup failed for {}", source.display()))?
+            {
+                StepResult::Done => break,
+                StepResult::More => continue,
+                StepResult::Busy | StepResult::Locked => {
+                    if std::time::Instant::now() >= deadline {
+                        bail!(
+                            "SQLite backup remained busy for five minutes: {}",
+                            source.display()
+                        );
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                _ => bail!("SQLite backup returned an unsupported step state"),
+            }
+        }
     }
+    source_connection
+        .execute_batch("ROLLBACK")
+        .with_context(|| format!("failed to close SQLite snapshot for {}", source.display()))?;
 
     let mut statement = destination_connection
         .prepare("PRAGMA integrity_check")
