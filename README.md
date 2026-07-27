@@ -5,9 +5,9 @@
 Your agent history is not a cache.
 
 Akeep is a local-first CLI for preserving coding-agent sessions and related
-state. It creates compressed, content-addressed recovery points, encrypts data
-before it reaches remote storage, verifies what was written, and recovers the
-provider-native files without silently overwriting live state.
+state. It creates compressed, content-addressed recovery points, can encrypt
+data before it reaches remote storage, verifies what was written, and recovers
+the provider-native files without silently overwriting live state.
 
 > [!IMPORTANT]
 > Akeep is currently in design/pre-alpha. It is not yet protecting your data.
@@ -25,8 +25,8 @@ Akeep is designed around five promises:
 - **Local-first:** no account, network request, or telemetry is required.
 - **Exact:** raw provider files remain the source of truth and are preserved
   byte-for-byte.
-- **Private:** remote objects are encrypted on the client; storage providers do
-  not receive plaintext.
+- **Private:** no upload or telemetry happens by default. Client-side
+  encryption is available but never forced.
 - **Verifiable:** every recovery point has a versioned manifest and content
   hashes.
 - **Non-destructive:** backup never edits provider state, and recovery defaults
@@ -43,7 +43,7 @@ It will:
   OpenCode;
 - take consistent snapshots of live SQLite databases;
 - create incremental, deduplicated, compressed archives;
-- encrypt archives before sending them to a remote target;
+- optionally encrypt archives before sending them to a remote target;
 - write to a local directory or an S3-compatible object store;
 - list, inspect, verify, and recover historical recovery points;
 - install an optional weekly systemd user timer on Linux;

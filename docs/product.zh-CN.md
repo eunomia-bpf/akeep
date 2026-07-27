@@ -32,7 +32,7 @@ Akeep 值得做，但不能把自己定义成“又一个 Agent 对话查看器�
 
 - 不能少于现有五个 Provider 的原始备份覆盖；
 - 不能丢失现有的 SQLite 一致性快照、定时运行、增量上传和不传播删除；
-- 必须新增客户端加密、压缩/去重、内容哈希和恢复验证；
+- 必须新增可选客户端加密、压缩/去重、内容哈希和恢复验证；
 - 必须能与旧服务并行，不修改旧备份；
 - 必须通过两次真实恢复演练后，才允许替换旧服务。
 
@@ -67,7 +67,7 @@ Akeep 值得做，但不能把自己定义成“又一个 Agent 对话查看器�
 - live SQLite 一致性快照；
 - 内容寻址的增量 archive；
 - 压缩与跨 recovery point 去重；
-- 上传前客户端加密；
+- 可选的上传前客户端加密，`none` 是完整支持的模式；
 - 本地目录与 S3-compatible 两个 target；
 - `doctor`、`backup`、`snapshots`、`verify`、`recover`；
 - Linux systemd 定时器；
@@ -112,24 +112,32 @@ AWS S3、R2、MinIO、Backblaze B2 等大量服务；本地 filesystem 又能覆
 或其他 target 时再新增。
 
 Provider adapter 不应决定 archive 格式，storage target 也不应看懂 transcript。
-这样新增 Agent 不会修改加密/恢复核心，新增 backend 也不会接触明文。
+这样新增 Agent 不会修改 archive/恢复核心；开启客户端加密时，新增 backend
+也不会接触明文。
 
 ## 隐私承诺
 
-“Privacy first” 不能只是一句宣传语，应变成可测试的产品约束：
+“Privacy first” 不能只是一句宣传语，也不等于强制用户承担丢失密钥的风险。
+它应变成可测试的产品约束：
 
 - 默认离线、无账号、无 telemetry；
 - 未配置远端时没有网络请求；
-- 远端只看到客户端加密后的对象和最少元数据；
-- 原始文件和敏感路径不出现在远端明文对象名里；
+- `encryption = none` 是正式支持和测试的模式；
+- 加密模式在创建 vault 时确定，不能每次 backup 临时切换；
+- 本地 target 可以默认不开加密；
+- 远端 target 明确推荐加密，但说明风险后允许用户不开；
+- `doctor` 永远显示当前加密模式和 storage operator 是否能读取内容；
+- 开启加密时，远端只看到客户端加密后的对象和最少元数据；
+- 开启加密时，原始文件和敏感路径不出现在远端明文对象名里；
 - auth、credential、cache、临时目录默认排除；
 - 本地 staging 目录权限为 0700；
 - archive format、threat model 和 key recovery 行为公开；
-- 恢复密钥丢失会导致什么后果必须直说；
+- 开启加密时必须提供 recovery key；全部密钥丢失的后果必须直说；
 - 公开 corruption、crash-recovery 和 restore 测试。
 
 注意：Agent session 经常已经包含意外打印出来的 secret。Akeep 不能保证源数据
-没有 secret，但可以保证不会把它们以新增的明文副本上传到存储服务。
+没有 secret。未开启客户端加密时，Akeep 必须明确提示远端存储方能够读取这些
+内容，不能用 server-side encryption 冒充零知识加密。
 
 ## 市场与差异化
 
@@ -154,8 +162,8 @@ Akeep 的楔子应该是：
 
 组合差异是：
 
-> 原始状态保真 + 客户端加密 + 压缩去重 + Provider-aware 一致性快照 +
-> 可验证恢复 + 后续 semantic handoff。
+> 原始状态保真 + 用户可选客户端加密 + 压缩去重 + Provider-aware
+> 一致性快照 + 可验证恢复 + 后续 semantic handoff。
 
 ## 宣传方式
 
@@ -172,8 +180,8 @@ Akeep 的楔子应该是：
 
 第三句应直接给证据：
 
-> **Every recovery point is content-addressed, encrypted on your device, and
-> tested before Akeep calls it complete.**
+> **Every recovery point is content-addressed and tested before Akeep calls it
+> complete. Client-side encryption is available when you want it.**
 
 不要把 “AI history compression tool” 当主定位。用户不会为了压缩 JSONL 安装
 一个高权限工具，但会为了避免丢掉数百小时工作安装可靠恢复工具。
@@ -183,7 +191,7 @@ Akeep 的楔子应该是：
 用隔离 fixture 做 90 秒、可复现的恢复演示：
 
 1. `akeep doctor` 发现五个 Provider；
-2. `akeep backup` 创建加密 recovery point；
+2. `akeep backup` 创建 recovery point；
 3. 删除临时 fixture，不碰真实用户数据；
 4. `akeep recover`；
 5. 显示逐文件 hash 完全一致；

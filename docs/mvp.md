@@ -14,7 +14,7 @@ and undocumented local formats.
 The MVP is complete when this loop works on the dogfood machine:
 
 ```text
-discover -> snapshot -> chunk -> compress -> encrypt -> store
+discover -> snapshot -> chunk -> compress -> [encrypt] -> store
     -> verify -> recover to scratch -> compare -> provider smoke test
 ```
 
@@ -25,7 +25,8 @@ A backup that has not survived this loop is not counted as successful.
 1. Provider directories are read-only during discovery and backup.
 2. Raw provider bytes are the source of truth. Parsed indexes are disposable.
 3. No local deletion is propagated into historical recovery points.
-4. Remote payloads are encrypted before upload.
+4. Encryption is a vault-level user choice. Unencrypted vaults are fully
+   supported and never silently migrated.
 5. Recovery never overwrites live state without an explicit apply flag.
 6. A recovery point is not marked complete until its manifest and all required
    objects are durable and verifiable.
@@ -72,7 +73,7 @@ publication of a completed manifest.
 - Per-chunk strong content hash.
 - Compression suitable for JSONL, JSON, SQLite snapshots, and text artifacts.
 - Deduplication across recovery points and providers.
-- Client-side authenticated encryption for payload objects.
+- Optional client-side authenticated encryption for payload objects.
 - Stable logical paths separated from machine-specific absolute paths.
 - Host, provider, adapter version, source metadata, and creation time recorded
   without storing secrets in plaintext metadata.
@@ -87,8 +88,8 @@ afterthought.
 
 - Detect supported providers and configured storage targets.
 - Report included/excluded paths, bytes, file counts, and unreadable paths.
-- Check encryption key availability, credentials, bucket access, object
-  versioning where relevant, and scheduler state.
+- Check encryption key availability when enabled, credentials, bucket access,
+  object versioning where relevant, and scheduler state.
 - Support human-readable and `--json` output.
 
 `akeep backup`
@@ -96,7 +97,7 @@ afterthought.
 - Acquire a per-vault lock.
 - Snapshot live SQLite files through the SQLite backup API.
 - Incrementally archive changed content.
-- Upload only encrypted objects missing from the target.
+- Upload only objects missing from the target.
 - Publish the recovery-point manifest last.
 - Never invoke remote delete.
 - Return a non-zero status on any incomplete provider or target.
@@ -168,24 +169,34 @@ Recovery modes:
 3. Older provider versions remain recoverable as files even when current
    software can no longer index them.
 
-## 5. Privacy and key model
+## 5. Privacy and optional encryption
 
-The threat model assumes storage operators and accidental bucket readers must
-not see transcript, code, file paths, or provider metadata.
+Privacy-first means local ownership and explicit network behavior, not mandatory
+encryption. Akeep supports both unencrypted and client-encrypted vaults.
 
 For v0.1:
 
-- payload objects and sensitive manifest fields are encrypted locally;
-- filenames in remote storage are opaque object identifiers;
+- `encryption = "none"` is a supported, tested mode, not a hidden debug path;
+- client-side authenticated encryption is an optional vault-level mode;
+- local targets may default to `none`;
+- remote targets recommend encryption but allow the user to continue without
+  it after a clear disclosure;
+- encryption mode cannot change per backup; migration is an explicit operation
+  or creates a new vault;
+- `doctor` always displays the active mode and whether storage operators can
+  read the archive;
+- when encryption is enabled, payload objects and sensitive manifest fields are
+  encrypted locally and remote filenames are opaque object identifiers;
 - encryption uses an authenticated, reviewed construction;
-- a vault has an exportable offline recovery key;
+- an encrypted vault has an exportable offline recovery key;
 - losing every device key without the recovery key is clearly documented as
   permanent data loss;
-- `doctor` checks key access before backup, and recovery tests key access before
-  downloading large payloads;
+- `doctor` checks key access before encrypted backup, and recovery tests key
+  access before downloading large payloads;
 - plaintext staging files use mode 0700 directories and are removed after use.
 
-Exact algorithms and key wrapping should be recorded in the archive-format
+No upload, account, or telemetry occurs merely because Akeep is installed. Exact
+algorithms and key wrapping should be recorded in the archive-format
 specification during implementation and covered by test vectors.
 
 ## 6. Replacement and dogfood gate

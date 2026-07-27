@@ -37,7 +37,7 @@ there is no client-side encryption.
 | Incremental transfer | AWS file-level sync | Chunk/object-level incremental |
 | Remote target | AWS S3 only | Local filesystem and S3-compatible |
 | Compression | None | Streaming compression |
-| Client-side encryption | None | Required for remote objects |
+| Client-side encryption | None | Optional vault mode; `none` remains fully supported |
 | Remote deletion | Never | Never in v0.1 |
 | History | S3 object versions | Immutable recovery points |
 | Manifest | Presence booleans and timestamp | Versioned file/object hashes and adapter metadata |
@@ -61,7 +61,8 @@ standalone verification fixtures.
 
 ## Existing gaps Akeep is meant to close
 
-- A bucket reader can read raw transcripts and private code.
+- Without optional client-side encryption, a bucket reader can read raw
+  transcripts and private code.
 - Large changing files upload again in full.
 - There is no compression or cross-snapshot deduplication.
 - Manifests do not enumerate and hash protected content.
