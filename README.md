@@ -159,6 +159,7 @@ See:
 
 - [MVP specification](docs/mvp.md)
 - [Current backup baseline](docs/current-backup-baseline.md)
+- [Provider compatibility matrix](docs/providers.md)
 - [Product and launch plan (中文)](docs/product.zh-CN.md)
 - [Recovery and rollback runbook](docs/recovery-runbook.md)
 - [Testing and reliability evidence](docs/testing.md)
