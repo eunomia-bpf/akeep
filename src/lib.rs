@@ -1,7 +1,11 @@
+pub mod archive;
 pub mod cli;
 pub mod config;
 pub mod doctor;
+pub mod manifest;
 pub mod providers;
+pub mod source;
+pub mod vault;
 
 use anyhow::Result;
 

@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 pub const CONFIG_FORMAT_VERSION: u32 = 1;
 pub const DEFAULT_CHUNK_SIZE: u64 = 4 * 1024 * 1024;
+pub const MAX_CHUNK_SIZE: u64 = 64 * 1024 * 1024;
 pub const DEFAULT_COMPRESSION_LEVEL: i32 = 3;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
@@ -114,6 +115,12 @@ impl Config {
         if self.archive.chunk_size == 0 {
             bail!("archive.chunk_size must be greater than zero");
         }
+        if self.archive.chunk_size > MAX_CHUNK_SIZE {
+            bail!(
+                "archive.chunk_size must not exceed {} bytes",
+                MAX_CHUNK_SIZE
+            );
+        }
         if !(-7..=22).contains(&self.archive.compression_level) {
             bail!("archive.compression_level must be between -7 and 22");
         }
@@ -185,13 +192,13 @@ fn absolute_directory(path: &Path) -> Result<PathBuf> {
         .with_context(|| format!("failed to resolve directory {}", path.display()))
 }
 
-fn create_private_directory(path: &Path) -> Result<()> {
+pub(crate) fn create_private_directory(path: &Path) -> Result<()> {
     fs::create_dir_all(path)
         .with_context(|| format!("failed to create directory {}", path.display()))?;
     set_private_directory_permissions(path)
 }
 
-fn write_private_new_file(path: &Path, contents: &[u8]) -> Result<()> {
+pub(crate) fn write_private_new_file(path: &Path, contents: &[u8]) -> Result<()> {
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     set_private_file_creation_permissions(&mut options);

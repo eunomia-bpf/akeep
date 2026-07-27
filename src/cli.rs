@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Result, bail};
 use clap::{Args, Parser, Subcommand};
 
+use crate::archive;
 use crate::config::{self, EncryptionMode};
 use crate::doctor;
 
@@ -30,6 +31,18 @@ pub enum Command {
 
     /// Diagnose provider coverage and vault readiness.
     Doctor(DoctorArgs),
+
+    /// Create an incremental recovery point.
+    Backup(OutputArgs),
+
+    /// List completed recovery points.
+    Snapshots(OutputArgs),
+
+    /// Verify a recovery point.
+    Verify(VerifyArgs),
+
+    /// Recover a recovery point into an empty directory.
+    Recover(RecoverArgs),
 }
 
 #[derive(Debug, Args)]
@@ -55,6 +68,43 @@ pub enum ConfigCommand {
 #[derive(Debug, Args)]
 pub struct DoctorArgs {
     /// Emit a stable machine-readable report.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct OutputArgs {
+    /// Emit stable machine-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct VerifyArgs {
+    /// Snapshot ID or `latest`.
+    #[arg(default_value = "latest")]
+    pub snapshot: String,
+
+    /// Only check manifest structure and object presence.
+    #[arg(long)]
+    pub quick: bool,
+
+    /// Emit stable machine-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RecoverArgs {
+    /// Snapshot ID or `latest`.
+    #[arg(default_value = "latest")]
+    pub snapshot: String,
+
+    /// Empty directory into which files will be recovered.
+    #[arg(long, required = true, value_name = "DIRECTORY")]
+    pub to: PathBuf,
+
+    /// Emit stable machine-readable output.
     #[arg(long)]
     pub json: bool,
 }
@@ -88,6 +138,69 @@ pub fn run(cli: Cli) -> Result<()> {
             }
             if !report.healthy {
                 bail!("doctor found one or more blocking problems");
+            }
+        }
+        Command::Backup(args) => {
+            let active = config::Config::load(&config_path)?;
+            let report = archive::backup(&config_path, &active)?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("Created recovery point {}", report.snapshot_id);
+                println!("Files: {}", report.files);
+                println!("Logical bytes: {}", report.logical_bytes);
+                println!("Unique objects: {}", report.unique_objects);
+                println!(
+                    "New objects: {} ({} stored bytes)",
+                    report.new_objects, report.new_stored_bytes
+                );
+            }
+        }
+        Command::Snapshots(args) => {
+            let active = config::Config::load(&config_path)?;
+            let snapshots = archive::snapshots(&active)?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&snapshots)?);
+            } else if snapshots.is_empty() {
+                println!("No recovery points.");
+            } else {
+                for snapshot in snapshots {
+                    println!(
+                        "{}  {}  {} files  {} logical bytes  {} stored bytes",
+                        snapshot.snapshot_id,
+                        snapshot.hostname,
+                        snapshot.files,
+                        snapshot.logical_bytes,
+                        snapshot.stored_bytes
+                    );
+                }
+            }
+        }
+        Command::Verify(args) => {
+            let active = config::Config::load(&config_path)?;
+            let report = archive::verify(&active, &args.snapshot, !args.quick)?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!(
+                    "Verified recovery point {} ({}, {} files, {} bytes)",
+                    report.snapshot_id,
+                    if report.full { "full" } else { "quick" },
+                    report.files,
+                    report.logical_bytes
+                );
+            }
+        }
+        Command::Recover(args) => {
+            let active = config::Config::load(&config_path)?;
+            let report = archive::recover(&active, &args.snapshot, &args.to)?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("Recovered {}", report.snapshot_id);
+                println!("Target: {}", report.target.display());
+                println!("Files: {}", report.files);
+                println!("Logical bytes: {}", report.logical_bytes);
             }
         }
     }

@@ -1,0 +1,250 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use assert_cmd::Command;
+use predicates::prelude::*;
+use tempfile::TempDir;
+
+#[test]
+fn backup_verify_list_and_recover_round_trip() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.claude.join("projects/demo/session.jsonl"),
+        b"abcdefghijk",
+    )
+    .unwrap();
+    fs::write(
+        fixture.claude.join("projects/demo/duplicate.jsonl"),
+        b"abcdefghijk",
+    )
+    .unwrap();
+    fs::write(fixture.claude.join("projects/demo/empty.jsonl"), b"").unwrap();
+    fs::write(
+        fixture.claude.join(".credentials.json"),
+        b"must-not-back-up",
+    )
+    .unwrap();
+
+    let first = fixture.backup();
+    assert_eq!(first.files, 3);
+    assert_eq!(first.logical_bytes, 22);
+    assert!(first.new_objects > 0);
+    assert!(first.unique_objects < first.chunk_references);
+
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "verify",
+            "latest",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Verified recovery point"));
+
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "snapshots",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(&first.snapshot_id));
+
+    let recovery = fixture.temp.path().join("recovery");
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "recover",
+            "latest",
+            "--to",
+            recovery.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read(recovery.join("claude-code/projects/demo/session.jsonl")).unwrap(),
+        b"abcdefghijk"
+    );
+    assert_eq!(
+        fs::read(recovery.join("claude-code/projects/demo/duplicate.jsonl")).unwrap(),
+        b"abcdefghijk"
+    );
+    assert_eq!(
+        fs::read(recovery.join("claude-code/projects/demo/empty.jsonl")).unwrap(),
+        b""
+    );
+    assert!(!recovery.join("claude-code/.credentials.json").exists());
+    assert!(!recovery.join(".akeep-recovery-incomplete").exists());
+
+    let second = fixture.backup();
+    assert_eq!(second.new_objects, 0);
+    assert_eq!(second.new_stored_bytes, 0);
+}
+
+#[test]
+fn full_verify_detects_corruption() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.claude.join("projects/demo/session.jsonl"),
+        b"important",
+    )
+    .unwrap();
+    let backup = fixture.backup();
+    let manifest = load_manifest(&fixture.vault, &backup.snapshot_id);
+    let object = &manifest.files[0].chunks[0].id;
+    let object_path = fixture
+        .vault
+        .join("objects")
+        .join(&object[..2])
+        .join(format!("{}.zst", &object[2..]));
+    fs::write(object_path, b"corrupt").unwrap();
+
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "verify",
+            "latest",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("decompress"));
+}
+
+#[test]
+fn recover_refuses_a_nonempty_target() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.claude.join("projects/demo/session.jsonl"),
+        b"important",
+    )
+    .unwrap();
+    fixture.backup();
+    let recovery = fixture.temp.path().join("recovery");
+    fs::create_dir(&recovery).unwrap();
+    fs::write(recovery.join("keep.txt"), b"do not overwrite").unwrap();
+
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "recover",
+            "latest",
+            "--to",
+            recovery.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not empty"));
+    assert_eq!(
+        fs::read(recovery.join("keep.txt")).unwrap(),
+        b"do not overwrite"
+    );
+}
+
+#[test]
+fn recover_refuses_a_target_inside_the_vault() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.claude.join("projects/demo/session.jsonl"),
+        b"important",
+    )
+    .unwrap();
+    fixture.backup();
+    let recovery = fixture.vault.join("recovery");
+
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "recover",
+            "latest",
+            "--to",
+            recovery.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("overlaps vault"));
+    assert!(!recovery.exists());
+}
+
+struct Fixture {
+    temp: TempDir,
+    config: PathBuf,
+    vault: PathBuf,
+    claude: PathBuf,
+}
+
+impl Fixture {
+    fn new() -> Self {
+        let temp = TempDir::new().unwrap();
+        let config = temp.path().join("config.toml");
+        let vault = temp.path().join("vault");
+        let claude = temp.path().join("claude");
+        fs::create_dir_all(claude.join("projects/demo")).unwrap();
+
+        Command::cargo_bin("akeep")
+            .unwrap()
+            .args([
+                "--config",
+                config.to_str().unwrap(),
+                "init",
+                "--target",
+                vault.to_str().unwrap(),
+            ])
+            .assert()
+            .success();
+
+        let mut active = akeep::config::Config::load(&config).unwrap();
+        active.archive.chunk_size = 4;
+        active.sources.claude_home = Some(claude.clone());
+        active.sources.codex_home = Some(temp.path().join("missing-codex"));
+        active.sources.grok_home = Some(temp.path().join("missing-grok"));
+        active.sources.kimi_home = Some(temp.path().join("missing-kimi"));
+        active.sources.opencode_share = Some(temp.path().join("missing-opencode-share"));
+        active.sources.opencode_state = Some(temp.path().join("missing-opencode-state"));
+        fs::write(&config, toml::to_string_pretty(&active).unwrap()).unwrap();
+
+        Self {
+            temp,
+            config,
+            vault,
+            claude,
+        }
+    }
+
+    fn backup(&self) -> akeep::archive::BackupReport {
+        let output = Command::cargo_bin("akeep")
+            .unwrap()
+            .args([
+                "--config",
+                self.config.to_str().unwrap(),
+                "backup",
+                "--json",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap()
+    }
+}
+
+fn load_manifest(vault: &Path, snapshot_id: &str) -> akeep::manifest::Manifest {
+    let path = vault.join("manifests").join(format!("{snapshot_id}.json"));
+    serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
+}

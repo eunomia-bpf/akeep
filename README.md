@@ -10,9 +10,10 @@ data before it reaches remote storage, verifies what was written, and recovers
 the provider-native files without silently overwriting live state.
 
 > [!IMPORTANT]
-> Akeep is currently in design/pre-alpha. It is not yet protecting your data.
-> The first implementation milestone is a dogfoodable Linux CLI, not a GUI or
-> hosted service.
+> Akeep is currently pre-alpha. Local backup, verification, and scratch recovery
+> are implemented and tested. S3-compatible storage, optional encryption, and
+> scheduling are still under development, so do not replace an existing backup
+> yet.
 
 ## Why Akeep
 
@@ -49,19 +50,28 @@ It will:
 - install an optional weekly systemd user timer on Linux;
 - preserve deleted or superseded local sessions in the archive.
 
-The planned CLI contract is:
+Build and exercise the current local CLI:
 
 ```console
+git clone https://github.com/eunomia-bpf/akeep
+cd akeep
+cargo install --path .
+
+akeep init
 akeep doctor
 akeep backup
 akeep snapshots
 akeep verify latest
 akeep recover latest --to /tmp/akeep-recovery
-akeep schedule install --weekly
 ```
 
-Cross-agent semantic handoff, local search, additional storage backends, and a
-desktop UI come after verified recovery works on real data.
+`akeep init` writes `~/.config/akeep/config.toml` and creates a private local
+vault under `~/.local/share/akeep/vaults/default`. Review `akeep doctor` before
+the first backup. Akeep skips known credential, cache, and temporary paths and
+never follows symlinks.
+
+S3-compatible storage, systemd scheduling, optional encryption, cross-agent
+semantic handoff, and local search are the next implementation milestones.
 
 ## What Akeep is not
 
@@ -92,10 +102,9 @@ See:
 
 ## Project status
 
-The repository currently contains the product contract and implementation
-acceptance criteria. The next milestone is a minimal Rust CLI that can run
-`akeep doctor`, create a local recovery point, verify it, and recover it into a
-scratch directory.
+The local recovery loop is implemented. The project is not ready to replace the
+existing dogfood backup until remote storage, scheduling, and the documented
+shadow-run recovery gate pass.
 
 ## License
 
