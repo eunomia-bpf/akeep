@@ -245,9 +245,11 @@ pub fn verify(config: &Config, reference: &str, full: bool) -> Result<VerifyRepo
     manifest.validate(config.vault.id)?;
 
     if full {
-        for file in &manifest.files {
-            verify_file(&vault, file)?;
-        }
+        manifest
+            .files
+            .par_iter()
+            .map(|file| verify_file(&vault, file))
+            .collect::<Result<Vec<_>>>()?;
         vault.record_full_verification(&manifest.snapshot_id)?;
     } else {
         verify_object_presence(&vault, &manifest)?;
@@ -298,7 +300,7 @@ pub fn recover(
 
     let marker = target.join(".akeep-recovery-incomplete");
     create_private_new_file(&marker)?;
-    let recovery_result = recover_files(&vault, selected, target);
+    let recovery_result = recover_files(&vault, &selected, target);
     if recovery_result.is_ok() {
         fs::remove_file(&marker)
             .with_context(|| format!("failed to remove recovery marker {}", marker.display()))?;
@@ -471,11 +473,11 @@ fn verify_file(vault: &Vault, file: &FileRecord) -> Result<()> {
     validate_logical_path(&file.logical_path)?;
     let mut file_hasher = blake3::Hasher::new();
     let mut file_size = 0_u64;
-    for chunk in &file.chunks {
-        let raw = vault.read_chunk(&chunk.id)?;
-        verify_chunk(chunk, &raw)?;
-        file_hasher.update(&raw);
-        file_size += raw.len() as u64;
+    for chunk_batch in file.chunks.chunks(MAX_FILE_BATCH_CHUNKS) {
+        for raw in read_verified_chunks(vault, chunk_batch)? {
+            file_hasher.update(&raw);
+            file_size += raw.len() as u64;
+        }
     }
     if file_size != file.size {
         bail!(
@@ -576,37 +578,49 @@ fn resolve_future_path(path: &Path) -> Result<PathBuf> {
     Ok(resolved)
 }
 
-fn recover_files<'a>(
-    vault: &Vault,
-    records: impl IntoIterator<Item = &'a FileRecord>,
-    target: &Path,
-) -> Result<()> {
-    for record in records {
-        validate_logical_path(&record.logical_path)?;
-        let output = target.join(&record.logical_path);
-        let parent = output
-            .parent()
-            .with_context(|| format!("recovery path {} has no parent", output.display()))?;
-        create_private_directory(parent)?;
-        let mut file = create_private_new_file(&output)?;
-        let mut file_hasher = blake3::Hasher::new();
-        let mut file_size = 0_u64;
-        for chunk in &record.chunks {
-            let raw = vault.read_chunk(&chunk.id)?;
-            verify_chunk(chunk, &raw)?;
+fn recover_files(vault: &Vault, records: &[&FileRecord], target: &Path) -> Result<()> {
+    records
+        .par_iter()
+        .map(|record| recover_file(vault, record, target))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(())
+}
+
+fn recover_file(vault: &Vault, record: &FileRecord, target: &Path) -> Result<()> {
+    validate_logical_path(&record.logical_path)?;
+    let output = target.join(&record.logical_path);
+    let parent = output
+        .parent()
+        .with_context(|| format!("recovery path {} has no parent", output.display()))?;
+    create_private_directory(parent)?;
+    let mut file = create_private_new_file(&output)?;
+    let mut file_hasher = blake3::Hasher::new();
+    let mut file_size = 0_u64;
+    for chunk_batch in record.chunks.chunks(MAX_FILE_BATCH_CHUNKS) {
+        for raw in read_verified_chunks(vault, chunk_batch)? {
             file.write_all(&raw)
                 .with_context(|| format!("failed to recover {}", output.display()))?;
             file_hasher.update(&raw);
             file_size += raw.len() as u64;
         }
-        file.sync_all()
-            .with_context(|| format!("failed to sync recovered file {}", output.display()))?;
-        if file_size != record.size || file_hasher.finalize().to_hex().as_str() != record.blake3 {
-            bail!("recovered file failed verification: {}", output.display());
-        }
-        apply_metadata(&output, record)?;
     }
-    Ok(())
+    file.sync_all()
+        .with_context(|| format!("failed to sync recovered file {}", output.display()))?;
+    if file_size != record.size || file_hasher.finalize().to_hex().as_str() != record.blake3 {
+        bail!("recovered file failed verification: {}", output.display());
+    }
+    apply_metadata(&output, record)
+}
+
+fn read_verified_chunks(vault: &Vault, chunks: &[ChunkRecord]) -> Result<Vec<Vec<u8>>> {
+    chunks
+        .par_iter()
+        .map(|chunk| {
+            let raw = vault.read_chunk(&chunk.id)?;
+            verify_chunk(chunk, &raw)?;
+            Ok(raw)
+        })
+        .collect()
 }
 
 fn create_private_new_file(path: &Path) -> Result<File> {
