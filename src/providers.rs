@@ -3,13 +3,17 @@ use std::fmt;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use clap::ValueEnum;
 use directories::BaseDirs;
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(
+    Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, ValueEnum,
+)]
 #[serde(rename_all = "kebab-case")]
+#[value(rename_all = "kebab-case")]
 pub enum Provider {
     ClaudeCode,
     Codex,

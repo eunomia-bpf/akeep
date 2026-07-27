@@ -9,7 +9,9 @@ use uuid::Uuid;
 
 use crate::config::{Config, EncryptionMode, create_private_directory};
 use crate::crypto::CryptoContext;
-use crate::manifest::{Manifest, validate_object_id, validate_snapshot_id};
+use crate::manifest::{
+    FileRecord, Manifest, validate_logical_path, validate_object_id, validate_snapshot_id,
+};
 use crate::storage::{ObjectMetadata, Storage};
 
 const VAULT_METADATA_VERSION: u32 = 1;
@@ -122,6 +124,69 @@ impl Vault {
         self.storage
             .metadata(&key)?
             .with_context(|| format!("missing object {id}"))
+    }
+
+    pub fn visit_file_chunks(
+        &self,
+        file: &FileRecord,
+        mut visitor: impl FnMut(&[u8]) -> Result<()>,
+    ) -> Result<()> {
+        validate_logical_path(&file.logical_path)?;
+        let mut hasher = blake3::Hasher::new();
+        let mut size = 0_u64;
+        for chunk in &file.chunks {
+            let raw = self.read_chunk(&chunk.id)?;
+            if raw.len() as u64 != chunk.raw_size {
+                bail!(
+                    "raw size mismatch for object {}: got {}, expected {}",
+                    chunk.id,
+                    raw.len(),
+                    chunk.raw_size
+                );
+            }
+            let id = blake3::hash(&raw).to_hex().to_string();
+            if id != chunk.id {
+                bail!(
+                    "content hash mismatch for object {}: decoded as {}",
+                    chunk.id,
+                    id
+                );
+            }
+            size = size
+                .checked_add(raw.len() as u64)
+                .context("file size overflow")?;
+            hasher.update(&raw);
+            visitor(&raw)?;
+        }
+        if size != file.size {
+            bail!(
+                "file size mismatch for {}: got {}, expected {}",
+                file.logical_path,
+                size,
+                file.size
+            );
+        }
+        let hash = hasher.finalize().to_hex().to_string();
+        if hash != file.blake3 {
+            bail!(
+                "file hash mismatch for {}: got {}, expected {}",
+                file.logical_path,
+                hash,
+                file.blake3
+            );
+        }
+        Ok(())
+    }
+
+    pub fn read_file(&self, file: &FileRecord) -> Result<Vec<u8>> {
+        let capacity = usize::try_from(file.size)
+            .context("file is too large to materialize on this platform")?;
+        let mut contents = Vec::with_capacity(capacity);
+        self.visit_file_chunks(file, |chunk| {
+            contents.extend_from_slice(chunk);
+            Ok(())
+        })?;
+        Ok(contents)
     }
 
     pub fn publish_manifest(&self, manifest: &Manifest) -> Result<()> {

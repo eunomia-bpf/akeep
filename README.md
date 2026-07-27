@@ -64,6 +64,9 @@ akeep backup
 akeep snapshots
 akeep verify latest
 akeep recover latest --to /tmp/akeep-recovery
+akeep index rebuild
+akeep search "database migration"
+akeep export latest --format markdown --to recovery-point.md
 akeep schedule install --weekly
 akeep schedule status
 ```
@@ -111,7 +114,8 @@ akeep schedule uninstall
 ```
 
 See [configuration and operations](docs/configuration.md) and the
-[archive format](docs/archive-format.md).
+[archive format](docs/archive-format.md). Search, export, and cross-agent
+handoff are described in [portable history workflows](docs/portable-history.md).
 
 ## What Akeep is not
 
