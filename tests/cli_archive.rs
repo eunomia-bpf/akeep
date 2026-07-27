@@ -349,6 +349,39 @@ fn recover_refuses_a_nonempty_target() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn recover_refuses_a_symlinked_target() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.claude.join("projects/demo/session.jsonl"),
+        b"important",
+    )
+    .unwrap();
+    fixture.backup();
+    let real_target = fixture.temp.path().join("real-recovery");
+    let recovery_link = fixture.temp.path().join("recovery-link");
+    fs::create_dir(&real_target).unwrap();
+    symlink(&real_target, &recovery_link).unwrap();
+
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "recover",
+            "latest",
+            "--to",
+            recovery_link.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("real directory"));
+    assert!(fs::read_dir(real_target).unwrap().next().is_none());
+}
+
 #[test]
 fn recover_refuses_a_target_inside_the_vault() {
     let fixture = Fixture::new();

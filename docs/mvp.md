@@ -1,6 +1,6 @@
 # Akeep MVP specification
 
-Status: design approved for implementation
+Status: v0.1 implementation complete; dogfood replacement gate in progress
 
 Target: a dogfoodable Linux CLI
 
@@ -130,9 +130,11 @@ afterthought.
 
 ### P1: immediately after the replacement gate
 
-- Claude Code and Codex local full-text search with a rebuildable SQLite index.
-- Markdown and JSON export.
-- Semantic handoff bundle between Claude Code and Codex containing goal,
+- [Implemented early] Claude Code and Codex local full-text search with a
+  rebuildable SQLite index.
+- [Implemented early] Markdown and JSON export.
+- [Implemented early] Semantic handoff bundle between Claude Code and Codex
+  containing goal,
   decisions, changed files, commands/results, test status, repository state,
   artifacts, and open tasks.
 - Recovery-point retention policy with dry-run; no live-state offload yet.
@@ -203,20 +205,20 @@ specification during implementation and covered by test vectors.
 
 Akeep may replace the current weekly service only after all of these pass:
 
-- [ ] The five current providers are discovered with documented exclusions.
+- [x] The five current providers are discovered with documented exclusions.
 - [ ] At least three scheduled Akeep backups complete over at least 14 days.
 - [ ] The latest recovery point is fully recovered into scratch and byte hashes
       match the snapshotted inputs.
 - [ ] A recovery point at least one week old is fully recovered.
 - [ ] A deliberately corrupted copied archive is rejected by `verify`.
-- [ ] An interrupted backup resumes or safely restarts without publishing a
+- [x] An interrupted backup resumes or safely restarts without publishing a
       false-complete recovery point.
-- [ ] A live SQLite database is backed up under concurrent writes and passes
+- [x] A live SQLite database is backed up under concurrent writes and passes
       integrity checks after recovery.
 - [ ] Claude Code and Codex can each recognize a restored fixture in an isolated
       test home, or the exact incompatibility is documented.
-- [ ] The old S3 backup remains untouched throughout shadow mode.
-- [ ] Operator runbook documents how to re-enable the old timer.
+- [x] The old S3 backup remains untouched throughout shadow mode.
+- [x] Operator runbook documents how to re-enable the old timer.
 
 Only then should the old timer be disabled. Its remote backup remains a
 fallback until Akeep has at least one additional successful restore drill.
