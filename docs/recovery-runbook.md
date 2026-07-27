@@ -6,12 +6,12 @@ do not paste private bucket names or identities into issues.
 ## Routine drill
 
 ```console
-akeep doctor
-akeep snapshots
-akeep verify latest
-akeep recover latest --to /tmp/akeep-drill
+akeep status
+akeep log
+akeep fsck HEAD
+akeep checkout HEAD --to /tmp/akeep-drill
 # Smaller provider-native drill:
-akeep recover latest --provider claude-code --to /tmp/akeep-claude-drill
+akeep checkout HEAD --provider claude-code --to /tmp/akeep-claude-drill
 ```
 
 Compare recovered file BLAKE3 hashes with the JSON export or manifest. Open
@@ -35,10 +35,10 @@ provider may update indexes inside the scratch copy. Recognition means a known
 restored session appears in the native picker; it does not require sending a
 prompt or making a network request.
 
-## Interrupted backup
+## Interrupted commit
 
-An interrupted backup may leave immutable unreferenced objects, but it publishes
-no manifest and does not update `refs/latest`. Rerun `akeep backup`; content
+An interrupted commit may leave immutable unreferenced objects, but it publishes
+no manifest and does not update `refs/latest`. Rerun `akeep commit`; content
 addressing safely reuses complete objects. Do not manually delete remote
 objects.
 
@@ -53,8 +53,16 @@ provider home.
 
 Stop. Do not edit `vault.json`, the configured recipient, encrypted objects, or
 manifests. Restore the exact matching identity from the offline key backup,
-enforce mode 0600 on Unix, and run `akeep doctor` followed by `akeep verify`.
+enforce mode 0600 on Unix, and run `akeep status` followed by `akeep fsck`.
 There is no cryptographic bypass if all matching identities are lost.
+
+## Interrupted clone
+
+An interrupted or rejected clone keeps `.akeep-clone-incomplete` in its new
+destination. Do not use that bundle as a repository. Preserve it for diagnosis
+or remove the whole new directory, then rerun `akeep clone` with another
+nonexistent destination. An encrypted clone deliberately does not contain the
+age identity; restore that key separately before running `fsck` or `checkout`.
 
 ## Scheduler rollback
 
@@ -78,10 +86,10 @@ Do not disable the previous timer until every replacement checkbox in
 ## Remote incident
 
 1. Stop the Akeep timer without deleting data.
-2. Record the affected recovery-point IDs and local verification receipts.
+2. Record the affected commit IDs and local integrity-check receipts.
 3. Preserve bucket versions and access logs.
-4. Recover a known historical manifest by explicit ID, not `latest`.
-5. Run full verification into a new scratch directory.
+4. Check out a known historical manifest by explicit ID, not `HEAD`.
+5. Run full `fsck`, then checkout into a new scratch directory.
 6. Rotate storage credentials if exposure is suspected.
 7. For a plaintext vault, assume archive contents were readable. For an age
    vault, protect and rotate access credentials while preserving the identity

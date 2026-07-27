@@ -3,21 +3,22 @@
 [![CI](https://github.com/eunomia-bpf/akeep/actions/workflows/ci.yml/badge.svg)](https://github.com/eunomia-bpf/akeep/actions/workflows/ci.yml)
 [![Security audit](https://github.com/eunomia-bpf/akeep/actions/workflows/audit.yml/badge.svg)](https://github.com/eunomia-bpf/akeep/actions/workflows/audit.yml)
 
-**Private, verified backup and recovery for coding-agent work.**
+**Git-like version history for coding-agent work.**
 
 Your agent history is not a cache.
 
-Akeep is a local-first CLI for preserving coding-agent sessions and related
-state. It creates compressed, content-addressed recovery points, can encrypt
-data before it reaches remote storage, verifies what was written, and recovers
-the provider-native files without silently overwriting live state.
+Akeep is a privacy-first CLI that discovers coding-agent sessions and saves
+them as compressed, deduplicated commits. You can inspect history, compare two
+versions, check archive integrity, restore provider-native files, and clone the
+repository. Everything works locally; S3-compatible storage and age encryption
+are optional.
 
 > [!IMPORTANT]
-> Akeep is currently pre-alpha. The complete backup loop works with local and
-> S3-compatible targets, optional age encryption, full verification, scratch
-> recovery, and a Linux systemd user timer. Keep an existing backup during the
-> documented shadow-run gate; software passing tests is not yet the same as a
-> proven long-term recovery history.
+> Akeep is currently pre-alpha. The complete versioned-backup loop works with
+> local and S3-compatible targets, optional age encryption, full integrity
+> checks, scratch checkout, repository cloning, and a Linux systemd user timer.
+> Keep an existing backup during the documented shadow-run gate; software
+> passing tests is not yet the same as a proven long-term recovery history.
 
 ## Why Akeep
 
@@ -29,20 +30,20 @@ local transcripts.
 
 Akeep is designed around five promises:
 
+- **Versioned:** commits have messages and parent links; `HEAD~N`, `log`, and
+  `diff` make history understandable.
 - **Local-first:** no account, network request, or telemetry is required.
 - **Exact:** raw provider files remain the source of truth and are preserved
   byte-for-byte.
 - **Private:** no upload or telemetry happens by default. Client-side
   encryption is available but never forced.
-- **Verifiable:** every recovery point has a versioned manifest and content
-  hashes.
-- **Non-destructive:** backup never edits provider state, and recovery defaults
-  to a scratch directory.
+- **Non-destructive:** commits never edit provider state, and checkout defaults
+  to a separate scratch directory.
 
 ## What works now
 
-The v0.1 release is intentionally a backup-and-recovery product, not another
-history viewer.
+The v0.1 release is intentionally a versioned backup-and-recovery product, not
+another history viewer or agent-memory layer.
 
 The current CLI:
 
@@ -52,7 +53,8 @@ The current CLI:
 - create incremental, deduplicated, compressed archives;
 - optionally encrypt archives before sending them to a remote target;
 - write to a local directory or an S3-compatible object store;
-- list, inspect, verify, and recover historical recovery points;
+- commit, list, compare, integrity-check, and check out historical versions;
+- clone a local or S3-backed repository into a self-contained local bundle;
 - run full or provider-scoped scratch recovery drills;
 - install an optional weekly systemd user timer on Linux;
 - preserve deleted or superseded local sessions in the archive;
@@ -68,23 +70,41 @@ cd akeep
 cargo install --path .
 
 akeep init
-akeep doctor
-akeep backup
-akeep snapshots
-akeep verify latest
-akeep recover latest --to /tmp/akeep-recovery
-akeep recover latest --provider claude-code --to /tmp/akeep-claude-drill
+akeep status
+akeep commit -m "before the migration"
+# Continue working with your agents, then:
+akeep commit -m "after the migration"
+akeep log
+akeep diff HEAD~1 HEAD
+akeep fsck HEAD
+akeep checkout HEAD --to /tmp/akeep-recovery
+akeep checkout HEAD --provider claude-code --to /tmp/akeep-claude-drill
+akeep clone /mnt/backup/akeep-copy
 akeep index rebuild
 akeep search "database migration"
-akeep export latest --format markdown --to recovery-point.md
+akeep export HEAD --format markdown --to recovery-point.md
 akeep schedule install --weekly
 akeep schedule status
 ```
 
 `akeep init` writes `~/.config/akeep/config.toml` and creates a private local
-vault under `~/.local/share/akeep/vaults/default`. Review `akeep doctor` before
-the first backup. Akeep skips known credential, cache, and temporary paths and
-never follows symlinks.
+repository under `~/.local/share/akeep/vaults/default`. Review `akeep status`
+before the first commit. There is deliberately no required `add`: provider
+adapters discover the supported durable files automatically. First-time setup
+is `init`, `status`, `commit`; ordinary use can be only `commit`. Akeep skips
+known credential, cache, and temporary paths and never follows symlinks.
+
+`clone` copies the active repository—filesystem or S3—into
+`DIRECTORY/{config.toml,repository/,state/}` and checks every transferred
+object plus the cloned commit chain. Use the clone directly:
+
+```console
+akeep --config /mnt/backup/akeep-copy/config.toml log
+akeep --config /mnt/backup/akeep-copy/config.toml fsck HEAD
+```
+
+For an encrypted repository, the clone keeps the configured identity path but
+does not copy the private age identity. Move or back up that key separately.
 
 Run the self-contained trust demo with synthetic five-provider fixtures:
 
@@ -93,8 +113,8 @@ cargo build
 AKEEP_BIN=target/debug/akeep ./scripts/demo.sh
 ```
 
-It proves a byte-identical recovery, then corrupts its temporary archive and
-proves that full verification rejects it. The demo uses a private temporary
+It proves a byte-identical checkout, then corrupts its temporary archive and
+proves that a full integrity check rejects it. The demo uses a private temporary
 directory and removes it on exit.
 
 Encryption remains optional. To create an age-encrypted vault:
@@ -105,8 +125,8 @@ akeep init --encryption age
 
 Akeep generates a mode-0600 recovery identity beside the configuration and
 prints its path. Back it up separately: if every copy is lost, nobody can
-decrypt the vault. `akeep doctor` performs an encrypt/decrypt self-test whenever
-encryption is enabled.
+decrypt the repository. `akeep status` performs an encrypt/decrypt self-test
+whenever encryption is enabled.
 
 Use an S3-compatible target by supplying a bucket and an isolated prefix:
 
@@ -128,10 +148,17 @@ warning and a fully supported plaintext vault.
 The Linux scheduler installs one service and timer per vault under the systemd
 user-unit directory. It is persistent across downtime, adds a randomized
 six-hour delay, runs with low CPU/I/O priority, and uses the same per-vault lock
-as manual backups. Uninstalling it leaves configuration and archives untouched:
+as manual commits. Uninstalling it leaves configuration and archives untouched:
 
 ```console
 akeep schedule uninstall
+```
+
+If upgrading from an earlier pre-alpha build whose generated service invoked
+`backup`, reinstall the timer immediately after replacing the binary:
+
+```console
+akeep schedule install --weekly
 ```
 
 See [configuration and operations](docs/configuration.md) and the
@@ -154,8 +181,8 @@ Eventually, yes—but only after evidence.
 
 Our initial dogfood machine already has more than 50 GB of agent state and a
 working weekly S3 backup service. Akeep will run beside that service until it
-passes the replacement gate: repeated automatic backups, recovery of both
-current and older snapshots, byte-level verification, corruption detection,
+passes the replacement gate: repeated automatic commits, recovery of both
+current and older versions, byte-level integrity checks, corruption detection,
 and a provider-level restore smoke test. The old service stays enabled until
 those checks pass.
 
@@ -172,7 +199,7 @@ See:
 
 ## Project status
 
-The v0.1 backup/recovery feature set is implemented. The project is not ready to
+The v0.1 versioned-backup feature set is implemented. The project is not ready to
 replace the existing dogfood backup until the time-based shadow-run and recovery
 drills in the replacement gate pass.
 

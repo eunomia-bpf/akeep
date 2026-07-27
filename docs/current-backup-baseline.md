@@ -39,12 +39,13 @@ there is no client-side encryption.
 | Compression | None | Streaming compression |
 | Client-side encryption | None | Optional vault mode; `none` remains fully supported |
 | Remote deletion | Never | Never in v0.1 |
-| History | S3 object versions | Immutable recovery points |
+| History | S3 object versions | Immutable commits with messages, parents, `HEAD~N`, `log`, and `diff` |
 | Manifest | Presence booleans and timestamp | Versioned file/object hashes and adapter metadata |
-| Verification | Bucket reachability | Full manifest/object/content verification |
-| Recovery | Download current prefix to scratch | Recover any point, verify every file, report conflicts |
+| Integrity | Bucket reachability | Full manifest/object/content `fsck` |
+| Recovery | Download current prefix to scratch | Checkout any commit, hash every file, report conflicts |
+| Repository copy | Standard AWS tooling | Exact local/S3-to-local `clone` bundle |
 | Provider restore test | Manual/not encoded | Automated isolated smoke test for Claude and Codex |
-| Search/handoff | None | P1 after replacement gate |
+| Search/handoff | None | Implemented as rebuildable derived output |
 
 ## Existing strengths Akeep must preserve
 
@@ -57,7 +58,7 @@ there is no client-side encryption.
 
 Akeep must not trade these properties for a sophisticated archive that is
 impossible to debug. The archive format needs a documented recovery path and
-standalone verification fixtures.
+standalone integrity-check fixtures.
 
 ## Existing gaps Akeep is meant to close
 

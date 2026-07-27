@@ -1,7 +1,8 @@
 # Testing and reliability evidence
 
-Akeep counts a verified recovery—not an upload—as success. This page separates
-repeatable software tests from the time-based dogfood replacement gate.
+Akeep counts an integrity-checked restore—not an upload—as success. This page
+separates repeatable software tests from the time-based dogfood replacement
+gate.
 
 ## Automated suite
 
@@ -25,15 +26,18 @@ The suite covers:
   `PRAGMA integrity_check`;
 - early staging of rotating provider files that disappear before archival;
 - local, plaintext S3-compatible, and age-encrypted round trips;
+- commit messages, parent chains, `HEAD~N`, and add/modify/delete diffs;
+- exact filesystem/S3 repository clones, encrypted-key non-copying, overlap
+  refusal, and incomplete-clone markers;
 - content deduplication within a chunk batch, across parallel files, and across
-  recovery points;
+  commits;
 - interrupted remote upload with no manifest publication, followed by a
   successful retry;
 - missing, corrupt, and reordered object rejection;
 - non-empty, symlinked, and vault-overlapping recovery target rejection;
 - incomplete recovery markers and byte/hash validation;
-- provider-scoped recovery without a false whole-snapshot verification receipt;
-- bounded parallel archive, verification, and recovery with ordered
+- provider-scoped recovery without a false whole-snapshot integrity receipt;
+- bounded parallel archive checks and recovery with ordered
   reconstruction of multi-chunk files;
 - 32 MiB multi-chunk scale and incremental rerun behavior;
 - systemd ownership, rollback, escaping, persistence, and uninstall behavior;
@@ -51,30 +55,30 @@ AKEEP_BIN=target/debug/akeep ./scripts/demo.sh
 
 The script creates only synthetic data in a mode-0700 temporary directory,
 compares every recovered fixture byte, deliberately corrupts a temporary
-archive object, and requires `verify` to reject it.
+archive object, and requires `fsck` to reject it.
 
 ## Manual recovery drill
 
 For an ordinary machine:
 
 ```console
-akeep doctor
-akeep backup
-akeep snapshots
-akeep verify latest
-akeep recover latest --to /path/on/a-separate-disk/akeep-drill
+akeep status
+akeep commit -m "manual recovery drill"
+akeep log
+akeep fsck HEAD
+akeep checkout HEAD --to /path/on/a-separate-disk/akeep-drill
 ```
 
 If scratch space is limited, recover one provider:
 
 ```console
-akeep recover latest \
+akeep checkout HEAD \
   --provider claude-code \
   --to /tmp/akeep-claude-drill
 ```
 
 The filtered drill verifies every selected object and file, but deliberately
-does not claim the entire recovery point was fully verified.
+does not record the entire commit as fully checked.
 
 ## Dogfood replacement gate
 

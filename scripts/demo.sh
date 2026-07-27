@@ -6,6 +6,7 @@ AKEEP_DEMO_ROOT=$(mktemp -d)
 AKEEP_DEMO_CONFIG="$AKEEP_DEMO_ROOT/config.toml"
 AKEEP_DEMO_VAULT="$AKEEP_DEMO_ROOT/vault"
 AKEEP_DEMO_RECOVERY="$AKEEP_DEMO_ROOT/recovery"
+AKEEP_DEMO_CLONE="$AKEEP_DEMO_ROOT/clone"
 
 cleanup_demo() {
     if [ -n "${AKEEP_DEMO_ROOT:-}" ] && [ -d "$AKEEP_DEMO_ROOT" ]; then
@@ -48,13 +49,17 @@ printf '%s\n' '==> Initialize a local plaintext demo vault'
 "$AKEEP_DEMO_BIN" --config "$AKEEP_DEMO_CONFIG" init --target "$AKEEP_DEMO_VAULT"
 
 printf '%s\n' '==> Discover five providers'
-run_akeep doctor
+run_akeep status
 
-printf '%s\n' '==> Back up, verify, and recover'
-run_akeep backup
-run_akeep snapshots
-run_akeep verify latest
-run_akeep recover latest --to "$AKEEP_DEMO_RECOVERY"
+printf '%s\n' '==> Commit two versions, diff, check, and restore'
+run_akeep commit -m "initial synthetic history"
+printf '%s\n' '{"role":"assistant","content":"the decision is now versioned"}' \
+    >> "$AKEEP_DEMO_ROOT/claude/projects/demo/session.jsonl"
+run_akeep commit -m "version the follow-up"
+run_akeep log
+run_akeep diff HEAD~1 HEAD --name-only
+run_akeep fsck HEAD
+run_akeep checkout HEAD --to "$AKEEP_DEMO_RECOVERY"
 
 cmp \
     "$AKEEP_DEMO_ROOT/claude/projects/demo/session.jsonl" \
@@ -73,11 +78,16 @@ cmp \
     "$AKEEP_DEMO_RECOVERY/opencode/storage/session.json"
 printf '%s\n' 'PASS: recovered provider-native files match every source byte'
 
+printf '%s\n' '==> Clone the repository and check the independent bundle'
+run_akeep clone "$AKEEP_DEMO_CLONE"
+"$AKEEP_DEMO_BIN" --config "$AKEEP_DEMO_CLONE/config.toml" fsck HEAD
+printf '%s\n' 'PASS: cloned repository has a readable, complete HEAD'
+
 AKEEP_DEMO_OBJECT=$(find "$AKEEP_DEMO_VAULT/objects" -type f -print -quit)
 test -n "$AKEEP_DEMO_OBJECT"
 printf '%s' 'deliberately corrupt' > "$AKEEP_DEMO_OBJECT"
-if run_akeep verify latest >/dev/null 2>&1; then
-    printf '%s\n' 'FAIL: corrupted archive passed verification' >&2
+if run_akeep fsck HEAD >/dev/null 2>&1; then
+    printf '%s\n' 'FAIL: corrupted archive passed fsck' >&2
     exit 1
 fi
-printf '%s\n' 'PASS: full verification rejected a deliberately corrupted object'
+printf '%s\n' 'PASS: full fsck rejected a deliberately corrupted object'

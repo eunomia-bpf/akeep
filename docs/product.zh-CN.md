@@ -1,27 +1,60 @@
 # Akeep 产品与发布计划
 
-状态：MVP 决策稿
+状态：v0.1 已实现，dogfood replacement gate 进行中
 
 产品关系：Akeep 是完全独立的产品、代码库和品牌
 
 ## 结论
 
-Akeep 值得做，但不能把自己定义成“又一个 Agent 对话查看器”。
+Akeep 值得做，但不能把自己定义成“又一个 Agent 对话查看器”，也不应把
+“压缩 JSONL”当成独立品类。
 
 最合适的定位是：
 
-> **Akeep — 面向 coding-agent 工作记录的隐私优先、可验证备份与恢复工具。**
+> **Akeep — coding-agent 工作记录的本地版本历史。**
 
 英文主描述：
 
-> **Private, verified backup and recovery for coding-agent work.**
+> **Git-like, privacy-first version history for coding-agent work.**
 
-第一版最重要的功能不是搜索、图表或支持多少 Agent，而是：
+产品心智不是“给聊天文件套 Git”，而是把用户已经在产生的 Agent 状态自动
+保存成 commit：
 
-> **从真实备份中完成一次经过哈希验证、Provider 能识别的恢复。**
+```text
+init -> status -> commit -> work normally -> commit
+                           -> log / diff / fsck / checkout / clone
+```
 
-备份上传成功不等于可恢复。Akeep 应该卖的长期价值是“不丢、可验证、
-能取回”，压缩和去重只是让这件事更便宜、更快。
+第一版最重要的产品体验是“对 Agent 工作流零侵入，但历史真的能取回”：
+
+- 不要求修改 Claude Code、Codex 或其他 Agent；
+- 不要求先 `add`，Provider adapter 自动发现窄而明确的 durable-state allowlist；
+- 日常只需 `akeep commit`，需要时再 `log`、`diff` 或 `checkout`；
+- manifest parent 和 `HEAD~N` 提供真正的线性版本语义；
+- 哈希、压缩、去重、一致性 SQLite snapshot 是实现可靠性的机制，不是让用户
+  先理解的产品口号。
+
+上传成功不等于可恢复。长期价值仍然是“不丢、看得懂版本、能取回”；压缩和
+去重让它在 50+ GB 的真实数据上可负担。
+
+## 名字：保留 Akeep，不改成 akgit
+
+现在即使刚开始，也不建议改名为 `akgit`：
+
+- `Akeep` 直接表达“替用户保存 Agent work”，可以覆盖本地、S3、未来托管同步；
+- `akgit` 会暗示 Git object/protocol 兼容、working tree、staging、branch、merge、
+  remote 和冲突语义；v0.1 有意不实现这些；
+- 用户真正需要的是熟悉的少数动作，不是第二套 Git；
+- `akeep commit/log/diff/checkout/clone` 已经借用了足够的认知，无需把整个品牌
+  绑在实现类比上。
+
+只有未来真的需要 `branch/merge/push/pull`，并且格式可以由普通 Git 工具读取
+时，才应重新讨论 `akgit`。当前产品名和二进制都保持 `akeep`。
+
+本轮公开 Web/GitHub 检索没有发现一个在 coding-agent history 类别中占据
+`Akeep` 或 `akgit` 的主导产品；这不是商标许可结论。正式发布前仍应单独检查
+GitHub、crates.io、Homebrew、主要域名和目标销售地区商标。即使 `akgit` 可用，
+上述产品预期问题仍然使 `Akeep` 更合适。
 
 ## 我们自己能不能用
 
@@ -40,6 +73,12 @@ Akeep 值得做，但不能把自己定义成“又一个 Agent 对话查看器�
 任何在 50+ GB 数据上成本失控、内存爆炸、恢复过慢或误报成功的设计，都应
 在公开发布前暴露。
 
+首个真实 commit 的数字已经说明压缩是有效机制，但不是唯一卖点：
+55,206,535,333 logical bytes（51.42 GiB）变为 10,690,998,971 stored bytes
+（9.96 GiB），即 5.16:1、减少 80.6%。首次 commit 内的重复 chunk 只有
+188,747,292 bytes（0.34%），因此首轮节省主要来自 zstd；跨 commit 去重的价值
+体现在后续未变化内容不再上传，而不是把首轮压缩率全部归功于 dedup。
+
 ## 能否不再使用之前的备份项目
 
 可以，但不是现在立刻停。
@@ -48,10 +87,10 @@ Akeep 值得做，但不能把自己定义成“又一个 Agent 对话查看器�
 
 1. Akeep 使用独立目录和独立 S3 prefix 进行 shadow backup；
 2. 连续运行至少 14 天并完成至少三次自动备份；
-3. 恢复最新和至少一周前的两个 recovery point；
+3. checkout 最新和至少一周前的两个 commit；
 4. 对恢复结果做逐文件哈希比对；
 5. 在隔离的 Provider home 中确认 Claude Code 和 Codex 能识别恢复记录；
-6. 人为破坏一份复制出来的 archive，确认 `verify` 必须失败；
+6. 人为破坏一份复制出来的 archive，确认 `fsck` 必须失败；
 7. 通过后再停旧 timer，同时保留旧远端数据作为回退。
 
 通过这组 gate 后，Akeep 可以替代现有“Agent history 到 S3”的专用服务。
@@ -59,20 +98,24 @@ Akeep 值得做，但不能把自己定义成“又一个 Agent 对话查看器�
 
 ## MVP 范围
 
-### v0.1：先替掉现有备份服务
+### v0.1：版本历史 + 现有备份能力等价
 
 必须具备：
 
 - Claude Code、Codex、Grok、Kimi Code、OpenCode 原始数据发现；
 - live SQLite 一致性快照；
 - 内容寻址的增量 archive；
-- 压缩与跨 recovery point 去重；
+- commit message、parent、`HEAD~N` 与跨 commit 压缩去重；
 - 可选的上传前客户端加密，`none` 是完整支持的模式；
 - 本地目录与 S3-compatible 两个 target；
-- `doctor`、`backup`、`snapshots`、`verify`、`recover`；
+- `init`、`status`、`commit`、`log`、`diff`、`fsck`、`checkout`、`clone`；
 - Linux systemd 定时器；
 - 默认不改 Provider 文件、不传播删除、不覆盖恢复目标；
 - 人类可读和 JSON 两种报告。
+
+`add` 不进入 v0.1。自动发现比强迫用户维护 staging set 更符合“对现有 Agent
+体验最小改动”的目标。将来若用户需要备份 adapter allowlist 之外的自定义目录，
+可以增加显式 source 配置或可选 `add`，但不能让它成为普通 commit 的前置步骤。
 
 暂不做：
 
@@ -83,9 +126,9 @@ Akeep 值得做，但不能把自己定义成“又一个 Agent 对话查看器�
 - 自动清理本机冷 session；
 - 跨 Provider 原生 session 注入。
 
-### v0.2：让历史真正可继续
+### 已提前实现的便携历史能力
 
-备份替换 gate 通过后，再加入：
+以下原计划放到 v0.2 的能力已经提前实现，但仍是 versioned backup 之上的派生层：
 
 - Claude/Codex 本地全文搜索；
 - Markdown/JSON 导出；
@@ -115,6 +158,19 @@ Provider adapter 不应决定 archive 格式，storage target 也不应看懂 tr
 这样新增 Agent 不会修改 archive/恢复核心；开启客户端加密时，新增 backend
 也不会接触明文。
 
+### “sync” 到底能承诺什么
+
+v0.1 可以诚实承诺：
+
+- commit 直接写入一个用户选择的本地或 S3-compatible repository；
+- `clone` 能把 filesystem 或 S3 repository 精确复制成可独立使用的本地 bundle；
+- 用户可把 filesystem target 放在 NAS、Syncthing 或 rclone 管理的目录。
+
+它还不能宣传成实时多设备双向 sync。当前没有 device identity、并发 writer
+协调、分支/冲突、增量 pull 或 key pairing。首页应使用 “local or your own
+storage” 和 “clone” 等准确表达；“managed encrypted sync” 留给有协议和冲突
+语义的后续产品。
+
 ## 隐私承诺
 
 “Privacy first” 不能只是一句宣传语，也不等于强制用户承担丢失密钥的风险。
@@ -123,10 +179,10 @@ Provider adapter 不应决定 archive 格式，storage target 也不应看懂 tr
 - 默认离线、无账号、无 telemetry；
 - 未配置远端时没有网络请求；
 - `encryption = none` 是正式支持和测试的模式；
-- 加密模式在创建 vault 时确定，不能每次 backup 临时切换；
+- 加密模式在创建 vault 时确定，不能每次 commit 临时切换；
 - 本地 target 可以默认不开加密；
 - 远端 target 明确推荐加密，但说明风险后允许用户不开；
-- `doctor` 永远显示当前加密模式和 storage operator 是否能读取内容；
+- `status` 永远显示当前加密模式和 storage operator 是否能读取内容；
 - 开启加密时，远端只看到客户端加密后的对象和最少元数据；
 - 开启加密时，原始文件和敏感路径不出现在远端明文对象名里；
 - auth、credential、cache、临时目录默认排除；
@@ -139,18 +195,31 @@ Provider adapter 不应决定 archive 格式，storage target 也不应看懂 tr
 没有 secret。未开启客户端加密时，Akeep 必须明确提示远端存储方能够读取这些
 内容，不能用 server-side encryption 冒充零知识加密。
 
+因此“不强制加密”是更好的默认：可信、已全盘加密的本地磁盘通常不需要 Akeep
+再加一层密钥风险；远端则强烈推荐 age，但用户确认披露后仍可选择 plaintext。
+加密不是一个可随 commit 切换的 flag，而是 `init --encryption age` 确定的
+repository 属性。私钥丢失没有后门；`clone` 也故意不复制它，用户必须把 identity
+单独放进密码管理器、加密移动介质或另一份离线备份。
+
 ## 市场与差异化
 
-当前市场已经证明“历史管理”是真需求，同时也说明普通 viewer 很拥挤：
+截至 2026-07 的复核结论是：方向有真实需求，但“Agent 历史版本化”本身也已经
+出现直接竞品，不能再把 Git-like 命令当成唯一创新：
 
 - [ctx](https://www.ctx.rs/) 已经把跨 coding-agent 的本地 SQLite 索引与搜索
   做成开源 CLI；
+- [coding-agent-search / cass](https://github.com/Dicklesworthstone/coding_agent_session_search)
+  已经覆盖大量 Provider 的本地 TUI/CLI 检索；
 - [Agent Sessions](https://github.com/jazzyalex/agent-sessions) 已经提供多 Agent
   的本地 macOS 浏览、搜索和 resume；
 - [Claude Code History Viewer](https://github.com/jhlee0409/claude-code-history-viewer)
   已经能离线浏览多个 coding assistant；
 - [Contextify](https://contextify.sh/) 已经覆盖本地历史、搜索和云同步；
 - [Claude Sync](https://claude-sync.com/) 已经强调 Claude Code 的端到端加密同步；
+- [stift](https://stift.sh/) 已经提供多 Agent 的 hosted/self-hosted background
+  push/pull；
+- [Entire](https://github.com/entireio/cli) 已经用 Git hook 捕获 Agent session，
+  把 checkpoint/session metadata 放到独立 Git branch，并提供 resume/rewind；
 - [Spool](https://spool.pro/) 已经主打分享和继续 Agent session。
 
 因此 Akeep 不应主打：
@@ -162,18 +231,25 @@ Provider adapter 不应决定 archive 格式，storage target 也不应看懂 tr
 
 Akeep 的楔子应该是：
 
-> **Not just backed up. Proven recoverable.**
+> **Your agent work deserves version history.**
+
+但真正的产品差异不能只写成 `commit/log/diff`。与最接近的 Entire 相比，Akeep
+不依赖每个代码仓库的 Git hook 或用户代码 commit，而是跨项目、跨 Provider
+备份完整的 provider-native durable state；与 stift/Claude Sync 相比，v0.1
+不要求账号或 server，支持本地/S3、自选 plaintext/age，并包含 live SQLite
+一致性 snapshot 和完整 scratch checkout。这个差异必须由兼容矩阵、50+ GB
+dogfood、故障注入和真实恢复演练证明，不能只靠命令名字。
 
 需求也不是抽象假设：Claude Code
 [官方 sessions 文档](https://code.claude.com/docs/en/sessions)说明本地 transcript
 默认 30 天清理，并允许通过 `cleanupPeriodDays` 调整。Akeep 不应攻击 Provider
 的产品选择，而应清楚告诉用户：可 resume 的本地工作状态仍有 retention 和格式
-生命周期；如果它值得保留，就应拥有独立、可验证的 recovery point。
+生命周期；如果它值得保留，就应拥有独立、能被 checkout 和 fsck 的 commit。
 
 组合差异是：
 
-> 原始状态保真 + 用户可选客户端加密 + 压缩去重 + Provider-aware
-> 一致性快照 + 可验证恢复 + 后续 semantic handoff。
+> 自动发现的原始状态 + Git-like commit/diff/checkout + 用户可选客户端加密
+> + 压缩去重 + Provider-aware 一致性快照 + 后续 semantic handoff。
 
 ## 宣传方式
 
@@ -181,33 +257,32 @@ Akeep 的楔子应该是：
 
 主标题：
 
-> **Your agent history is not a cache.**
+> **Your agent work deserves version history.**
 
 副标题：
 
-> **Back up, verify, and recover Claude Code, Codex, and other coding-agent
-> work to local disk or your own storage—with optional client-side encryption
-> before upload.**
+> **Commit, diff, check out, and clone Claude Code, Codex, and other coding-agent
+> history—locally or in your own storage.**
 
 第三句应直接给证据：
 
-> **Every recovery point is content-addressed and tested before Akeep calls it
-> complete. Client-side encryption is available when you want it.**
+> **Akeep auto-discovers provider-native state, compresses and deduplicates each
+> commit, and offers optional client-side encryption when you want it.**
 
 不要把 “AI history compression tool” 当主定位。用户不会为了压缩 JSONL 安装
-一个高权限工具，但会为了避免丢掉数百小时工作安装可靠恢复工具。
+一个高权限工具，但会为了得到不依赖单个 Provider 的版本历史安装它。
 
 ### 第一支演示
 
 用隔离 fixture 做 90 秒、可复现的恢复演示：
 
-1. `akeep doctor` 发现五个 Provider；
-2. `akeep backup` 创建 recovery point；
-3. 删除临时 fixture，不碰真实用户数据；
-4. `akeep recover`；
-5. 显示逐文件 hash 完全一致；
-6. 破坏一个 archive object；
-7. `akeep verify` 明确拒绝。
+1. `akeep status` 自动发现五个 Provider；
+2. `akeep commit -m "before migration"`；
+3. 修改 fixture，再次 `commit`；
+4. `akeep log` 和 `akeep diff HEAD~1 HEAD`；
+5. `akeep checkout HEAD`，显示逐文件 hash 完全一致；
+6. `akeep clone`，用 clone config 运行 `fsck HEAD`；
+7. 破坏一个 archive object，`akeep fsck HEAD` 明确拒绝。
 
 这比先做漂亮 dashboard 更能建立备份产品最需要的信任。
 
@@ -215,14 +290,14 @@ Akeep 的楔子应该是：
 
 完成真实 dogfood restore 之后：
 
-> **Show HN: Akeep – I had 50GB of coding-agent history, so I built a backup I
-> could actually verify**
+> **Show HN: Akeep – Git-like local version history for coding agents**
 
 其他可测试标题：
 
-- “Your coding-agent history is plaintext, local, and not a backup.”
-- “Akeep: client-encrypted recovery points for Claude Code and Codex.”
-- “We corrupted our own Agent backup. Akeep caught it before restore.”
+- “Your agent work deserves version history.”
+- “Akeep: local-first commits for Claude Code, Codex, and OpenCode history.”
+- “Commit and diff your coding-agent history without changing your agent.”
+- “We corrupted our own Agent archive. Akeep caught it before checkout.”
 
 ### 首发渠道
 

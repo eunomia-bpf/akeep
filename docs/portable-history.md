@@ -1,6 +1,6 @@
 # Search, export, and semantic handoff
 
-These workflows are derived from recovery points. Raw provider files remain the
+These workflows are derived from commits. Raw provider files remain the
 source of truth, and all derived outputs can be deleted and rebuilt.
 
 ## Local search
@@ -11,10 +11,10 @@ akeep search "database migration"
 akeep search "failing integration test" --limit 50 --json
 ```
 
-The rebuild scans completed recovery points from newest to oldest and indexes
+The rebuild scans completed commits from newest to oldest and indexes
 the newest archived version of every Claude Code and Codex text path. This
 retains discoverability for session files deleted from the live provider while
-avoiding one duplicate copy per recovery point. SQLite/binary artifacts are not
+avoiding one duplicate copy per commit. SQLite/binary artifacts are not
 full-text indexed.
 
 The FTS5 database lives at `<vault state>/search.sqlite3`, uses mode 0600 on
@@ -28,23 +28,23 @@ not raw FTS syntax.
 Readable Markdown:
 
 ```console
-akeep export latest --format markdown --to session-export.md
+akeep export HEAD --format markdown --to session-export.md
 ```
 
-Markdown includes verified UTF-8 text files up to 64 MiB each. It records but
+Markdown includes integrity-checked UTF-8 text files up to 64 MiB each. It records but
 omits SQLite, binary, invalid-UTF-8, and larger artifacts. Use it for review,
 not exact recovery.
 
 Exact JSON:
 
 ```console
-akeep export latest --format json --to recovery-point.json
+akeep export HEAD --format json --to recovery-point.json
 ```
 
 The JSON document includes the validated manifest and every file as a streaming
 standard-base64 payload. It is exact but intentionally generic: Akeep does not
 pretend undocumented provider formats share one lossless conversation schema.
-Use `akeep recover` when provider-native files are desired directly.
+Use `akeep checkout` when provider-native files are desired directly.
 
 Exports are private local files, are created with mode 0600 on Unix, cannot be
 placed inside the vault/state directory, and never overwrite an existing file.
@@ -53,7 +53,7 @@ They contain session content in plaintext regardless of vault encryption.
 ## Claude Code ↔ Codex handoff
 
 ```console
-akeep handoff latest \
+akeep handoff HEAD \
   --from claude-code \
   --for codex \
   --goal "Finish the restore drill and fix any mismatch" \

@@ -16,7 +16,7 @@ cargo package
 
 Tests must use synthetic fixtures and temporary directories. Never commit real
 agent sessions, credentials, age identities, bucket/account names, absolute
-home paths, or unredacted `doctor` output.
+home paths, or unredacted `status` output.
 
 Changes to archive layout, manifests, encryption, exclusions, recovery
 conflicts, or publication order need:

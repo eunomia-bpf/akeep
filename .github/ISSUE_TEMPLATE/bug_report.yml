@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible backup, verification, recovery, or CLI problem.
+description: Report a reproducible commit, integrity, checkout, or CLI problem.
 title: "[bug] "
 labels: ["bug"]
 body:
@@ -32,7 +32,7 @@ body:
     validations:
       required: true
   - type: textarea
-    id: doctor
+    id: status
     attributes:
-      label: Redacted doctor output
+      label: Redacted status output
       description: Remove paths, hostnames, bucket details, and anything private.

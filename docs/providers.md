@@ -15,8 +15,8 @@ synthetic fixtures and never contains private sessions.
 | Kimi Code | `kimi-code/` | `sessions`, `user-history`, `session_index.jsonl`, `workspaces.json` | Immutable/append-only files are read without following symlinks |
 | OpenCode | `opencode/` | `opencode.db`, `storage`, `prompt-history.jsonl` | SQLite backup API for `opencode.db` |
 
-Empty or absent optional paths are not errors. A backup refuses to publish an
-empty recovery point, an unreadable included path, a special file, a changed
+Empty or absent optional paths are not errors. A commit refuses to publish an
+empty version, an unreadable included path, a special file, a changed
 archive invariant, or a failed SQLite snapshot.
 
 ## Discovery overrides
@@ -45,7 +45,7 @@ Known credentials and non-durable state are excluded, including:
 - installed plugins, bundled binaries, vendor trees, and worktrees;
 - IDE/control sockets, locks, daemon state, and transient tool output.
 
-Run `akeep doctor --json` to see the exact resolved include inventory, declared
+Run `akeep status --json` to see the exact resolved include inventory, declared
 exclusions, unreadable paths, and skipped symlink count for the installed
 version. Agent transcripts can themselves contain secrets printed during a
 session; exclusion rules cannot redact source content.
