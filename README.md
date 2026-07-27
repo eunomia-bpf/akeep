@@ -53,8 +53,12 @@ The current CLI:
 - optionally encrypt archives before sending them to a remote target;
 - write to a local directory or an S3-compatible object store;
 - list, inspect, verify, and recover historical recovery points;
+- run full or provider-scoped scratch recovery drills;
 - install an optional weekly systemd user timer on Linux;
-- preserve deleted or superseded local sessions in the archive.
+- preserve deleted or superseded local sessions in the archive;
+- build a disposable local Claude Code/Codex full-text index;
+- export exact JSON/base64 or readable Markdown, and create reviewed
+  Claude Code ↔ Codex semantic handoff bundles.
 
 Build and exercise the current local CLI:
 
