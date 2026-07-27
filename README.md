@@ -1,5 +1,8 @@
 # Akeep
 
+[![CI](https://github.com/eunomia-bpf/akeep/actions/workflows/ci.yml/badge.svg)](https://github.com/eunomia-bpf/akeep/actions/workflows/ci.yml)
+[![Security audit](https://github.com/eunomia-bpf/akeep/actions/workflows/audit.yml/badge.svg)](https://github.com/eunomia-bpf/akeep/actions/workflows/audit.yml)
+
 **Private, verified backup and recovery for coding-agent work.**
 
 Your agent history is not a cache.
@@ -143,6 +146,9 @@ See:
 - [MVP specification](docs/mvp.md)
 - [Current backup baseline](docs/current-backup-baseline.md)
 - [Product and launch plan (中文)](docs/product.zh-CN.md)
+- [Recovery and rollback runbook](docs/recovery-runbook.md)
+- [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
 
 ## Project status
 

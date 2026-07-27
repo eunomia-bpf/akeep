@@ -1,0 +1,38 @@
+name: Bug report
+description: Report a reproducible backup, verification, recovery, or CLI problem.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not attach real session data, credentials, age identities, bucket names, or unredacted configuration.
+  - type: input
+    id: version
+    attributes:
+      label: Akeep version
+      placeholder: akeep 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: target
+    attributes:
+      label: Storage target
+      options:
+        - Filesystem
+        - AWS S3
+        - Other S3-compatible service
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Redacted reproduction
+      description: Include commands, expected behavior, actual behavior, and whether data was changed.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Redacted doctor output
+      description: Remove paths, hostnames, bucket details, and anything private.
