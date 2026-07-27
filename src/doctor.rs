@@ -4,18 +4,22 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
-use crate::config::Config;
+use crate::config::{Config, TargetConfig};
 use crate::crypto::CryptoContext;
 use crate::providers::{Provider, ProviderSpec, SourceItem, specifications};
+use crate::scheduler;
+use crate::storage::Storage;
 
-pub const DOCTOR_REPORT_VERSION: u32 = 1;
+pub const DOCTOR_REPORT_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DoctorReport {
     pub report_version: u32,
     pub healthy: bool,
     pub config_path: PathBuf,
-    pub target_path: PathBuf,
+    pub target: String,
+    pub storage_versioning: Option<String>,
+    pub scheduler_installed: Option<bool>,
     pub encryption_mode: String,
     pub providers: Vec<ProviderInventory>,
     pub warnings: Vec<String>,
@@ -49,13 +53,69 @@ pub struct ItemInventory {
 pub fn inspect(config_path: &Path, config: &Config) -> DoctorReport {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
+    let mut storage_versioning = None;
+    let scheduler_installed = if cfg!(target_os = "linux") {
+        match scheduler::is_installed(config) {
+            Ok(installed) => Some(installed),
+            Err(error) => {
+                warnings.push(format!("could not inspect scheduler state: {error:#}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
 
-    if !config.target.path.is_dir() {
+    if !config.vault.state_path.is_dir() {
         errors.push(format!(
-            "vault target is not a directory: {}",
-            config.target.path.display()
+            "vault state path is not a directory: {}",
+            config.vault.state_path.display()
         ));
     }
+    let target = match &config.target {
+        TargetConfig::Filesystem { path } => {
+            if !path.is_dir() {
+                errors.push(format!(
+                    "vault target is not a directory: {}",
+                    path.display()
+                ));
+            }
+            path.display().to_string()
+        }
+        TargetConfig::S3 { bucket, prefix, .. } => {
+            match Storage::from_config(&config.target) {
+                Ok(storage) => {
+                    if let Err(error) = storage.check_readable() {
+                        errors.push(format!("remote vault target is not readable: {error:#}"));
+                    } else {
+                        match storage.versioning_status() {
+                            Ok(status) => {
+                                storage_versioning = status;
+                                if storage_versioning.as_deref() != Some("Enabled") {
+                                    warnings.push(
+                                        "S3 bucket versioning is not enabled; remote overwrites have less protection"
+                                            .to_string(),
+                                    );
+                                }
+                            }
+                            Err(error) => warnings
+                                .push(format!("could not check S3 bucket versioning: {error:#}")),
+                        }
+                    }
+                }
+                Err(error) => {
+                    errors.push(format!("remote vault target is not readable: {error:#}"));
+                }
+            }
+            if config.encryption.mode == crate::config::EncryptionMode::None {
+                warnings.push(
+                    "remote vault is not client-side encrypted; the storage operator can read archived content"
+                        .to_string(),
+                );
+            }
+            format!("s3://{bucket}/{prefix}/")
+        }
+    };
     if let Err(error) = CryptoContext::from_config(&config.encryption) {
         errors.push(format!("encryption configuration is not usable: {error:#}"));
     }
@@ -70,10 +130,19 @@ pub fn inspect(config_path: &Path, config: &Config) -> DoctorReport {
 
     for spec in &specs {
         for root in &spec.roots {
-            if paths_overlap(&config.target.path, root) {
+            if let TargetConfig::Filesystem { path } = &config.target {
+                if paths_overlap(path, root) {
+                    errors.push(format!(
+                        "vault target {} overlaps provider root {}; choose a separate target",
+                        path.display(),
+                        root.display()
+                    ));
+                }
+            }
+            if paths_overlap(&config.vault.state_path, root) {
                 errors.push(format!(
-                    "vault target {} overlaps provider root {}; choose a separate target",
-                    config.target.path.display(),
+                    "vault state path {} overlaps provider root {}; choose a separate state path",
+                    config.vault.state_path.display(),
                     root.display()
                 ));
             }
@@ -103,7 +172,9 @@ pub fn inspect(config_path: &Path, config: &Config) -> DoctorReport {
         report_version: DOCTOR_REPORT_VERSION,
         healthy: errors.is_empty(),
         config_path: config_path.to_path_buf(),
-        target_path: config.target.path.clone(),
+        target,
+        storage_versioning,
+        scheduler_installed,
         encryption_mode: config.encryption.mode.to_string(),
         providers,
         warnings,
@@ -114,7 +185,20 @@ pub fn inspect(config_path: &Path, config: &Config) -> DoctorReport {
 pub fn print_human(report: &DoctorReport) {
     println!("Akeep doctor");
     println!("Config: {}", report.config_path.display());
-    println!("Target: {}", report.target_path.display());
+    println!("Target: {}", report.target);
+    if let Some(status) = &report.storage_versioning {
+        println!("Bucket versioning: {status}");
+    }
+    if let Some(installed) = report.scheduler_installed {
+        println!(
+            "Automatic schedule: {}",
+            if installed {
+                "installed"
+            } else {
+                "not installed"
+            }
+        );
+    }
     println!("Encryption: {}", report.encryption_mode);
     println!("Providers:");
     for provider in &report.providers {
@@ -282,8 +366,7 @@ mod tests {
 
     use super::*;
     use crate::config::{
-        ArchiveConfig, EncryptionConfig, EncryptionMode, FilesystemTarget, FilesystemTargetKind,
-        SourceOverrides, VaultConfig,
+        ArchiveConfig, EncryptionConfig, EncryptionMode, SourceOverrides, TargetConfig, VaultConfig,
     };
 
     #[test]
@@ -337,16 +420,16 @@ mod tests {
     }
 
     fn sample_config(target: PathBuf) -> Config {
+        let state_path = target.with_extension("state");
+        fs::create_dir_all(&state_path).unwrap();
         Config {
             format_version: 1,
             vault: VaultConfig {
                 id: Uuid::nil(),
                 created_at: DateTime::from_timestamp(0, 0).unwrap(),
+                state_path,
             },
-            target: FilesystemTarget {
-                kind: FilesystemTargetKind::Filesystem,
-                path: target,
-            },
+            target: TargetConfig::Filesystem { path: target },
             archive: ArchiveConfig {
                 chunk_size: 1024,
                 compression_level: 3,

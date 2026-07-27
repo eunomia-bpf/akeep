@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
 
 use crate::archive;
-use crate::config::{self, EncryptionMode};
+use crate::config::{self, EncryptionMode, TargetConfig};
 use crate::crypto;
 use crate::doctor;
+use crate::scheduler;
 use crate::vault::Vault;
 
 #[derive(Debug, Parser)]
@@ -45,13 +46,43 @@ pub enum Command {
 
     /// Recover a recovery point into an empty directory.
     Recover(RecoverArgs),
+
+    /// Manage an optional automatic backup schedule.
+    Schedule {
+        #[command(subcommand)]
+        command: ScheduleCommand,
+    },
 }
 
 #[derive(Debug, Args)]
 pub struct InitArgs {
     /// Filesystem directory that will hold the vault.
-    #[arg(long, value_name = "DIRECTORY")]
+    #[arg(long, value_name = "DIRECTORY", conflicts_with = "s3_bucket")]
     pub target: Option<PathBuf>,
+
+    /// S3 bucket that will hold the vault.
+    #[arg(long, value_name = "BUCKET", conflicts_with = "target")]
+    pub s3_bucket: Option<String>,
+
+    /// Relative prefix within the S3 bucket.
+    #[arg(long, value_name = "PREFIX", default_value = "akeep")]
+    pub s3_prefix: String,
+
+    /// AWS region override.
+    #[arg(long, value_name = "REGION", requires = "s3_bucket")]
+    pub aws_region: Option<String>,
+
+    /// AWS CLI profile.
+    #[arg(long, value_name = "PROFILE", requires = "s3_bucket")]
+    pub aws_profile: Option<String>,
+
+    /// S3-compatible endpoint URL.
+    #[arg(long, value_name = "URL", requires = "s3_bucket")]
+    pub s3_endpoint_url: Option<String>,
+
+    /// AWS CLI executable override.
+    #[arg(long, value_name = "FILE", requires = "s3_bucket")]
+    pub aws_cli: Option<PathBuf>,
 
     /// Vault encryption mode.
     #[arg(long, value_enum, default_value_t = EncryptionMode::None)]
@@ -115,30 +146,91 @@ pub struct RecoverArgs {
     pub json: bool,
 }
 
+#[derive(Debug, Subcommand)]
+pub enum ScheduleCommand {
+    /// Install and start a persistent systemd user timer.
+    Install {
+        /// Schedule one backup each week.
+        #[arg(long, required = true)]
+        weekly: bool,
+
+        /// Emit stable machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Report the timer's installation and runtime state.
+    Status {
+        /// Emit stable machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Disable and remove the timer, preserving configuration and archives.
+    Uninstall {
+        /// Emit stable machine-readable output.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 pub fn run(cli: Cli) -> Result<()> {
     let config_path = cli.config.unwrap_or(config::default_config_path()?);
 
     match cli.command {
         Command::Init(args) => {
-            let target = args.target.unwrap_or(config::default_vault_path()?);
+            let target = if let Some(bucket) = args.s3_bucket {
+                TargetConfig::S3 {
+                    bucket,
+                    prefix: args.s3_prefix,
+                    region: args.aws_region,
+                    profile: args.aws_profile,
+                    endpoint_url: args.s3_endpoint_url,
+                    aws_cli: args.aws_cli,
+                }
+            } else {
+                TargetConfig::Filesystem {
+                    path: args.target.unwrap_or(config::default_vault_path()?),
+                }
+            };
             let prepared = crypto::prepare_encryption(
                 args.encryption,
                 &config_path,
                 args.age_identity_file.as_deref(),
             )?;
-            let created = match config::initialize(&config_path, &target, prepared.config) {
+            let generated_identity = prepared.generated_identity_file.clone();
+            let created = match config::initialize(&config_path, target, prepared.config) {
                 Ok(created) => created,
                 Err(error) => {
-                    if let Some(path) = prepared.generated_identity_file {
+                    if let Some(path) = generated_identity {
                         let _ = std::fs::remove_file(path);
                     }
                     return Err(error);
                 }
             };
-            Vault::open(&created)?;
+            if let Err(error) = Vault::open(&created) {
+                let _ = std::fs::remove_file(&config_path);
+                let _ = std::fs::remove_dir_all(&created.vault.state_path);
+                if let Some(path) = generated_identity {
+                    let _ = std::fs::remove_file(path);
+                }
+                return Err(error).context("vault initialization failed and was rolled back");
+            }
             println!("Initialized Akeep vault {}", created.vault.id);
             println!("Config: {}", config_path.display());
-            println!("Target: {}", created.target.path.display());
+            match &created.target {
+                TargetConfig::Filesystem { path } => {
+                    println!("Target: {}", path.display());
+                }
+                TargetConfig::S3 { bucket, prefix, .. } => {
+                    println!("Target: s3://{bucket}/{prefix}/");
+                    if created.encryption.mode == EncryptionMode::None {
+                        println!(
+                            "Warning: this remote vault is not client-side encrypted; the storage operator can read it."
+                        );
+                    }
+                }
+            }
             println!("Encryption: {}", created.encryption.mode);
             if let Some(path) = created.encryption.identity_file {
                 println!("Recovery identity: {}", path.display());
@@ -225,6 +317,33 @@ pub fn run(cli: Cli) -> Result<()> {
                 println!("Target: {}", report.target.display());
                 println!("Files: {}", report.files);
                 println!("Logical bytes: {}", report.logical_bytes);
+            }
+        }
+        Command::Schedule { command } => {
+            let active = config::Config::load(&config_path)?;
+            let (action, report, json) = match command {
+                ScheduleCommand::Install { weekly, json } => {
+                    debug_assert!(weekly);
+                    (
+                        "Installed",
+                        scheduler::install(&config_path, &active)?,
+                        json,
+                    )
+                }
+                ScheduleCommand::Status { json } => ("Schedule", scheduler::status(&active)?, json),
+                ScheduleCommand::Uninstall { json } => {
+                    ("Uninstalled", scheduler::uninstall(&active)?, json)
+                }
+            };
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("{action}: {}", report.unit_name);
+                println!("Installed: {}", report.installed);
+                println!("Enabled: {}", report.enabled);
+                println!("Active: {}", report.active);
+                println!("Service: {}", report.service_path.display());
+                println!("Timer: {}", report.timer_path.display());
             }
         }
     }

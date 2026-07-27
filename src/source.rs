@@ -241,8 +241,7 @@ mod tests {
 
     use super::*;
     use crate::config::{
-        ArchiveConfig, EncryptionConfig, EncryptionMode, FilesystemTarget, FilesystemTargetKind,
-        SourceOverrides, VaultConfig,
+        ArchiveConfig, EncryptionConfig, EncryptionMode, SourceOverrides, TargetConfig, VaultConfig,
     };
 
     #[test]
@@ -298,11 +297,9 @@ mod tests {
             vault: VaultConfig {
                 id: Uuid::nil(),
                 created_at: DateTime::from_timestamp(0, 0).unwrap(),
+                state_path: target.with_extension("state"),
             },
-            target: FilesystemTarget {
-                kind: FilesystemTargetKind::Filesystem,
-                path: target,
-            },
+            target: TargetConfig::Filesystem { path: target },
             archive: ArchiveConfig {
                 chunk_size: 4,
                 compression_level: 3,

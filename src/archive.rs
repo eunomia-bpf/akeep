@@ -192,7 +192,7 @@ pub fn recover(config: &Config, reference: &str, target: &Path) -> Result<Recove
     let vault = Vault::open(config)?;
     let manifest = vault.load_manifest(reference)?;
     manifest.validate(config.vault.id)?;
-    prepare_recovery_target(vault.root(), target)?;
+    prepare_recovery_target(vault.filesystem_root(), vault.state_root(), target)?;
 
     let marker = target.join(".akeep-recovery-incomplete");
     create_private_new_file(&marker)?;
@@ -303,11 +303,11 @@ fn verify_object_presence(vault: &Vault, manifest: &Manifest) -> Result<()> {
             continue;
         }
         let metadata = vault.object_metadata(&chunk.id)?;
-        if metadata.len() != chunk.stored_size {
+        if metadata.size != chunk.stored_size {
             bail!(
                 "stored size mismatch for object {}: got {}, expected {}",
                 chunk.id,
-                metadata.len(),
+                metadata.size,
                 chunk.stored_size
             );
         }
@@ -365,16 +365,22 @@ fn verify_chunk(chunk: &ChunkRecord, raw: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn prepare_recovery_target(vault_root: &Path, target: &Path) -> Result<()> {
-    let resolved_vault = fs::canonicalize(vault_root)
-        .with_context(|| format!("failed to resolve vault {}", vault_root.display()))?;
+fn prepare_recovery_target(
+    vault_root: Option<&Path>,
+    state_root: &Path,
+    target: &Path,
+) -> Result<()> {
     let resolved_target = resolve_future_path(target)?;
-    if paths_overlap(&resolved_vault, &resolved_target) {
-        bail!(
-            "recovery target {} overlaps vault {}; choose a separate directory",
-            target.display(),
-            vault_root.display()
-        );
+    for protected in vault_root.into_iter().chain(std::iter::once(state_root)) {
+        let resolved = fs::canonicalize(protected)
+            .with_context(|| format!("failed to resolve {}", protected.display()))?;
+        if paths_overlap(&resolved, &resolved_target) {
+            bail!(
+                "recovery target {} overlaps vault/state path {}; choose a separate directory",
+                target.display(),
+                protected.display()
+            );
+        }
     }
     if target.exists() {
         let metadata = fs::symlink_metadata(target)?;

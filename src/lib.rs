@@ -5,7 +5,9 @@ pub mod crypto;
 pub mod doctor;
 pub mod manifest;
 pub mod providers;
+pub mod scheduler;
 pub mod source;
+pub mod storage;
 pub mod vault;
 
 use anyhow::Result;

@@ -1,21 +1,22 @@
-use std::fs::{self, File, OpenOptions};
-use std::io::{Cursor, Write};
+use std::fs::{File, OpenOptions};
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
-use tempfile::NamedTempFile;
 use uuid::Uuid;
 
 use crate::config::{Config, EncryptionMode, create_private_directory};
 use crate::crypto::CryptoContext;
 use crate::manifest::{Manifest, validate_object_id, validate_snapshot_id};
+use crate::storage::{ObjectMetadata, Storage};
 
 const VAULT_METADATA_VERSION: u32 = 1;
 
 pub struct Vault {
-    root: PathBuf,
+    storage: Storage,
+    state_root: PathBuf,
     codec: CryptoContext,
 }
 
@@ -41,7 +42,8 @@ struct VaultMetadata {
 impl Vault {
     pub fn open(config: &Config) -> Result<Self> {
         let vault = Self {
-            root: config.target.path.clone(),
+            storage: Storage::from_config(&config.target)?,
+            state_root: config.vault.state_path.clone(),
             codec: CryptoContext::from_config(&config.encryption)?,
         };
         vault.initialize_layout()?;
@@ -49,12 +51,20 @@ impl Vault {
         Ok(vault)
     }
 
-    pub fn root(&self) -> &Path {
-        &self.root
+    pub fn filesystem_root(&self) -> Option<&Path> {
+        self.storage.filesystem_root()
+    }
+
+    pub fn state_root(&self) -> &Path {
+        &self.state_root
+    }
+
+    pub fn target_description(&self) -> String {
+        self.storage.description()
     }
 
     pub fn acquire_backup_lock(&self) -> Result<VaultLock> {
-        let lock_path = self.root.join("locks").join("backup.lock");
+        let lock_path = self.state_root.join("locks").join("backup.lock");
         let file = open_private_rw(&lock_path)?;
         file.try_lock_exclusive()
             .with_context(|| format!("another backup holds {}", lock_path.display()))?;
@@ -64,40 +74,33 @@ impl Vault {
     pub fn staging_directory(&self) -> Result<tempfile::TempDir> {
         tempfile::Builder::new()
             .prefix("backup-")
-            .tempdir_in(self.root.join("staging"))
+            .tempdir_in(self.state_root.join("staging"))
             .context("failed to create private backup staging directory")
     }
 
     pub fn store_chunk(&self, raw: &[u8], compression_level: i32) -> Result<StoredChunk> {
         let id = blake3::hash(raw).to_hex().to_string();
-        let path = self.object_path(&id)?;
-        if path.exists() {
-            let metadata = fs::metadata(&path)
-                .with_context(|| format!("failed to inspect object {}", path.display()))?;
-            let decoded = self.read_chunk(&id)?;
-            if decoded != raw {
-                bail!("existing object {id} failed content verification");
-            }
-            return Ok(StoredChunk {
-                id,
-                stored_size: metadata.len(),
-                is_new: false,
-            });
-        }
-
-        let parent = path
-            .parent()
-            .with_context(|| format!("object path {} has no parent", path.display()))?;
-        create_private_directory(parent)?;
+        let key = self.object_key(&id)?;
         let compressed = zstd::stream::encode_all(Cursor::new(raw), compression_level)
             .context("failed to compress archive chunk")?;
         let encoded = self.codec.encrypt(&compressed)?;
         let stored_size = encoded.len() as u64;
-        atomic_create(&path, &encoded)?;
-        let decoded = self.read_chunk(&id)?;
-        if decoded != raw {
-            bail!("newly written object {id} failed content verification");
+
+        if let Some(metadata) = self.storage.metadata(&key)? {
+            if metadata.size != stored_size {
+                bail!(
+                    "existing object {id} has size {}, expected {stored_size}",
+                    metadata.size
+                );
+            }
+            return Ok(StoredChunk {
+                id,
+                stored_size: metadata.size,
+                is_new: false,
+            });
         }
+
+        self.storage.put(&key, &encoded, false)?;
 
         Ok(StoredChunk {
             id,
@@ -107,18 +110,18 @@ impl Vault {
     }
 
     pub fn read_chunk(&self, id: &str) -> Result<Vec<u8>> {
-        let path = self.object_path(id)?;
-        let encoded = fs::read(&path)
-            .with_context(|| format!("missing or unreadable object {}", path.display()))?;
+        let key = self.object_key(id)?;
+        let encoded = self.storage.get(&key)?;
         let compressed = self.codec.decrypt(&encoded)?;
         zstd::stream::decode_all(Cursor::new(compressed))
             .with_context(|| format!("failed to decompress object {id}"))
     }
 
-    pub fn object_metadata(&self, id: &str) -> Result<fs::Metadata> {
-        let path = self.object_path(id)?;
-        fs::metadata(&path)
-            .with_context(|| format!("missing or unreadable object {}", path.display()))
+    pub fn object_metadata(&self, id: &str) -> Result<ObjectMetadata> {
+        let key = self.object_key(id)?;
+        self.storage
+            .metadata(&key)?
+            .with_context(|| format!("missing object {id}"))
     }
 
     pub fn publish_manifest(&self, manifest: &Manifest) -> Result<()> {
@@ -127,80 +130,60 @@ impl Vault {
             serde_json::to_vec_pretty(manifest).context("failed to encode snapshot manifest")?;
         plaintext.push(b'\n');
         let encoded = self.codec.encrypt(&plaintext)?;
-        let path = self.manifest_path(&manifest.snapshot_id)?;
-        atomic_create(&path, &encoded)?;
-        atomic_replace(
-            &self.root.join("refs").join("latest"),
+        let key = self.manifest_key(&manifest.snapshot_id)?;
+        self.storage.put(&key, &encoded, false)?;
+        self.storage.put(
+            "refs/latest",
             format!("{}\n", manifest.snapshot_id).as_bytes(),
+            true,
         )?;
         Ok(())
     }
 
     pub fn load_manifest(&self, reference: &str) -> Result<Manifest> {
         let snapshot_id = self.resolve_reference(reference)?;
-        let path = self.manifest_path(&snapshot_id)?;
-        let encoded = fs::read(&path)
-            .with_context(|| format!("failed to read manifest {}", path.display()))?;
+        let key = self.manifest_key(&snapshot_id)?;
+        let encoded = self.storage.get(&key)?;
         let plaintext = self.codec.decrypt(&encoded)?;
         serde_json::from_slice(&plaintext)
-            .with_context(|| format!("failed to parse manifest {}", path.display()))
+            .with_context(|| format!("failed to parse manifest {snapshot_id}"))
     }
 
     pub fn list_manifests(&self) -> Result<Vec<Manifest>> {
-        let directory = self.root.join("manifests");
-        let mut paths = Vec::new();
-        for entry in fs::read_dir(&directory)
-            .with_context(|| format!("failed to read {}", directory.display()))?
-        {
-            let entry = entry?;
-            if entry.file_type()?.is_file()
-                && entry
-                    .file_name()
-                    .to_str()
-                    .is_some_and(|name| name.ends_with(self.manifest_suffix()))
-            {
-                paths.push(entry.path());
-            }
-        }
-        paths.sort();
-
-        paths
+        self.storage
+            .list("manifests/")?
             .into_iter()
-            .map(|path| {
-                let encoded = fs::read(&path)
-                    .with_context(|| format!("failed to read manifest {}", path.display()))?;
+            .filter(|key| key.ends_with(self.manifest_suffix()))
+            .map(|key| {
+                let encoded = self.storage.get(&key)?;
                 let plaintext = self.codec.decrypt(&encoded)?;
                 serde_json::from_slice(&plaintext)
-                    .with_context(|| format!("failed to parse manifest {}", path.display()))
+                    .with_context(|| format!("failed to parse manifest {key}"))
             })
             .collect()
     }
 
     fn initialize_layout(&self) -> Result<()> {
-        create_private_directory(&self.root)?;
-        for relative in ["objects", "manifests", "refs", "locks", "staging"] {
-            create_private_directory(&self.root.join(relative))?;
+        create_private_directory(&self.state_root)?;
+        for relative in ["locks", "staging"] {
+            create_private_directory(&self.state_root.join(relative))?;
         }
         Ok(())
     }
 
     fn initialize_metadata(&self, config: &Config) -> Result<()> {
-        let path = self.root.join("vault.json");
+        let key = "vault.json";
         let expected = VaultMetadata {
             format_version: VAULT_METADATA_VERSION,
             vault_id: config.vault.id,
             encryption: self.codec.mode(),
         };
-        if path.exists() {
-            let contents = fs::read(&path)
-                .with_context(|| format!("failed to read vault metadata {}", path.display()))?;
-            let actual: VaultMetadata = serde_json::from_slice(&contents)
-                .with_context(|| format!("failed to parse vault metadata {}", path.display()))?;
+        if self.storage.metadata(key)?.is_some() {
+            let contents = self.storage.get(key)?;
+            let actual: VaultMetadata =
+                serde_json::from_slice(&contents).context("failed to parse vault metadata")?;
             if actual != expected {
-                bail!(
-                    "vault metadata at {} does not match the active configuration",
-                    path.display()
-                );
+                bail!("vault metadata does not match the active configuration");
             }
             return Ok(());
         }
@@ -208,7 +191,7 @@ impl Vault {
         let mut encoded =
             serde_json::to_vec_pretty(&expected).context("failed to encode vault metadata")?;
         encoded.push(b'\n');
-        atomic_create(&path, &encoded)
+        self.storage.put(key, &encoded, false)
     }
 
     fn resolve_reference(&self, reference: &str) -> Result<String> {
@@ -216,29 +199,30 @@ impl Vault {
             validate_snapshot_id(reference)?;
             return Ok(reference.to_string());
         }
-        let path = self.root.join("refs").join("latest");
-        let snapshot_id = fs::read_to_string(&path)
-            .with_context(|| format!("no latest recovery point at {}", path.display()))?;
+        let encoded = self
+            .storage
+            .get("refs/latest")
+            .context("no latest recovery point")?;
+        let snapshot_id = std::str::from_utf8(&encoded)
+            .context("latest recovery-point reference is not UTF-8")?;
         let snapshot_id = snapshot_id.trim();
         validate_snapshot_id(snapshot_id)?;
         Ok(snapshot_id.to_string())
     }
 
-    fn manifest_path(&self, snapshot_id: &str) -> Result<PathBuf> {
+    fn manifest_key(&self, snapshot_id: &str) -> Result<String> {
         validate_snapshot_id(snapshot_id)?;
-        Ok(self
-            .root
-            .join("manifests")
-            .join(format!("{snapshot_id}{}", self.manifest_suffix())))
+        Ok(format!("manifests/{snapshot_id}{}", self.manifest_suffix()))
     }
 
-    fn object_path(&self, id: &str) -> Result<PathBuf> {
+    fn object_key(&self, id: &str) -> Result<String> {
         validate_object_id(id)?;
-        Ok(self.root.join("objects").join(&id[..2]).join(format!(
-            "{}{}",
+        Ok(format!(
+            "objects/{}/{}{}",
+            &id[..2],
             &id[2..],
             self.object_suffix()
-        )))
+        ))
     }
 
     fn object_suffix(&self) -> &'static str {
@@ -269,60 +253,9 @@ fn open_private_rw(path: &Path) -> Result<File> {
         .with_context(|| format!("failed to open {}", path.display()))
 }
 
-fn atomic_create(path: &Path, contents: &[u8]) -> Result<()> {
-    if path.exists() {
-        bail!("refusing to overwrite existing file {}", path.display());
-    }
-    let parent = path
-        .parent()
-        .with_context(|| format!("path {} has no parent", path.display()))?;
-    let mut temporary = NamedTempFile::new_in(parent)
-        .with_context(|| format!("failed to create temporary file in {}", parent.display()))?;
-    temporary
-        .write_all(contents)
-        .with_context(|| format!("failed to write temporary file for {}", path.display()))?;
-    temporary
-        .as_file()
-        .sync_all()
-        .with_context(|| format!("failed to sync temporary file for {}", path.display()))?;
-    temporary
-        .persist_noclobber(path)
-        .map_err(|error| error.error)
-        .with_context(|| format!("failed to publish {}", path.display()))?;
-    sync_directory(parent)
-}
-
-fn atomic_replace(path: &Path, contents: &[u8]) -> Result<()> {
-    let parent = path
-        .parent()
-        .with_context(|| format!("path {} has no parent", path.display()))?;
-    let mut temporary = NamedTempFile::new_in(parent)
-        .with_context(|| format!("failed to create temporary file in {}", parent.display()))?;
-    temporary
-        .write_all(contents)
-        .with_context(|| format!("failed to write temporary file for {}", path.display()))?;
-    temporary
-        .as_file()
-        .sync_all()
-        .with_context(|| format!("failed to sync temporary file for {}", path.display()))?;
-    fs::rename(temporary.path(), path)
-        .with_context(|| format!("failed to replace {}", path.display()))?;
-    sync_directory(parent)
-}
-
-fn sync_directory(path: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        File::open(path)
-            .with_context(|| format!("failed to open directory {}", path.display()))?
-            .sync_all()
-            .with_context(|| format!("failed to sync directory {}", path.display()))?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::PathBuf;
 
     use chrono::{DateTime, Utc};
@@ -331,8 +264,7 @@ mod tests {
 
     use super::*;
     use crate::config::{
-        ArchiveConfig, EncryptionConfig, EncryptionMode, FilesystemTarget, FilesystemTargetKind,
-        SourceOverrides, VaultConfig,
+        ArchiveConfig, EncryptionConfig, EncryptionMode, SourceOverrides, TargetConfig, VaultConfig,
     };
     use crate::manifest::{ArchiveDescriptor, MANIFEST_FORMAT_VERSION, Manifest, SnapshotStats};
 
@@ -354,7 +286,8 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let vault = Vault::open(&config(temp.path())).unwrap();
         let stored = vault.store_chunk(b"important", 3).unwrap();
-        fs::write(vault.object_path(&stored.id).unwrap(), b"corrupt").unwrap();
+        let key = vault.object_key(&stored.id).unwrap();
+        fs::write(vault.filesystem_root().unwrap().join(key), b"corrupt").unwrap();
 
         assert!(vault.store_chunk(b"important", 3).is_err());
     }
@@ -392,9 +325,9 @@ mod tests {
             vault: VaultConfig {
                 id: Uuid::nil(),
                 created_at: DateTime::from_timestamp(0, 0).unwrap(),
+                state_path: PathBuf::from(root).with_extension("state"),
             },
-            target: FilesystemTarget {
-                kind: FilesystemTargetKind::Filesystem,
+            target: TargetConfig::Filesystem {
                 path: PathBuf::from(root),
             },
             archive: ArchiveConfig {

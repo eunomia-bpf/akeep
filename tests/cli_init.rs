@@ -26,7 +26,12 @@ fn init_creates_a_private_valid_configuration() {
 
     assert!(vault.is_dir());
     let parsed = akeep::config::Config::load(&config).unwrap();
-    assert_eq!(parsed.target.path, vault.canonicalize().unwrap());
+    assert_eq!(
+        parsed.target,
+        akeep::config::TargetConfig::Filesystem {
+            path: vault.canonicalize().unwrap()
+        }
+    );
 
     #[cfg(unix)]
     {
@@ -92,4 +97,29 @@ fn config_show_loads_and_prints_the_configuration() {
         .success()
         .stdout(predicate::str::contains("format_version = 1"))
         .stdout(predicate::str::contains("mode = \"none\""));
+}
+
+#[test]
+fn failed_remote_init_does_not_leave_a_configuration() {
+    let temp = TempDir::new().unwrap();
+    let config = temp.path().join("config.toml");
+    let missing_aws = temp.path().join("missing-aws");
+
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .env("XDG_STATE_HOME", temp.path().join("state"))
+        .args([
+            "--config",
+            config.to_str().unwrap(),
+            "init",
+            "--s3-bucket",
+            "test-bucket",
+            "--aws-cli",
+            missing_aws.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("executable"));
+
+    assert!(!config.exists());
 }
