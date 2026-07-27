@@ -1,0 +1,4 @@
+/target/
+/.akeep-test/
+*.tmp
+*.log
