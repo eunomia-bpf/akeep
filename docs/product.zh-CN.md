@@ -143,6 +143,10 @@ Provider adapter 不应决定 archive 格式，storage target 也不应看懂 tr
 
 当前市场已经证明“历史管理”是真需求，同时也说明普通 viewer 很拥挤：
 
+- [ctx](https://www.ctx.rs/) 已经把跨 coding-agent 的本地 SQLite 索引与搜索
+  做成开源 CLI；
+- [Agent Sessions](https://github.com/jazzyalex/agent-sessions) 已经提供多 Agent
+  的本地 macOS 浏览、搜索和 resume；
 - [Claude Code History Viewer](https://github.com/jhlee0409/claude-code-history-viewer)
   已经能离线浏览多个 coding assistant；
 - [Contextify](https://contextify.sh/) 已经覆盖本地历史、搜索和云同步；
@@ -159,6 +163,12 @@ Provider adapter 不应决定 archive 格式，storage target 也不应看懂 tr
 Akeep 的楔子应该是：
 
 > **Not just backed up. Proven recoverable.**
+
+需求也不是抽象假设：Claude Code
+[官方 sessions 文档](https://code.claude.com/docs/en/sessions)说明本地 transcript
+默认 30 天清理，并允许通过 `cleanupPeriodDays` 调整。Akeep 不应攻击 Provider
+的产品选择，而应清楚告诉用户：可 resume 的本地工作状态仍有 retention 和格式
+生命周期；如果它值得保留，就应拥有独立、可验证的 recovery point。
 
 组合差异是：
 

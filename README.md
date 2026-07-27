@@ -23,7 +23,9 @@ the provider-native files without silently overwriting live state.
 
 Coding-agent histories routinely contain hours of decisions, commands, edits,
 artifacts, and private code. Provider-local files are useful but undocumented,
-mutable, and not a backup.
+mutable, and not a backup. For example, Claude Code documents a
+[30-day default cleanup period](https://code.claude.com/docs/en/sessions) for
+local transcripts.
 
 Akeep is designed around five promises:
 
