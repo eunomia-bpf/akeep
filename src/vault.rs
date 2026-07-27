@@ -18,12 +18,14 @@ use crate::storage::{ObjectMetadata, Storage};
 
 const VAULT_METADATA_VERSION: u32 = 1;
 const VERIFICATION_RECEIPT_VERSION: u32 = 1;
+const CHUNK_LOCK_SHARDS: usize = 64;
 
 pub struct Vault {
     storage: Storage,
     state_root: PathBuf,
     vault_id: Uuid,
     codec: CryptoContext,
+    chunk_locks: Vec<std::sync::Mutex<()>>,
 }
 
 pub struct VaultLock {
@@ -62,6 +64,9 @@ impl Vault {
             state_root: config.vault.state_path.clone(),
             vault_id: config.vault.id,
             codec: CryptoContext::from_config(&config.encryption)?,
+            chunk_locks: (0..CHUNK_LOCK_SHARDS)
+                .map(|_| std::sync::Mutex::new(()))
+                .collect(),
         };
         vault.initialize_layout()?;
         vault.initialize_metadata(config)?;
@@ -102,6 +107,11 @@ impl Vault {
             .context("failed to compress archive chunk")?;
         let encoded = self.codec.encrypt(&compressed)?;
         let stored_size = encoded.len() as u64;
+        let shard = usize::from(u8::from_str_radix(&id[..2], 16).context("invalid chunk id")?)
+            % self.chunk_locks.len();
+        let _chunk_lock = self.chunk_locks[shard]
+            .lock()
+            .map_err(|_| anyhow::anyhow!("chunk coordination lock is poisoned"))?;
 
         if let Some(metadata) = self.storage.metadata(&key)? {
             if metadata.size != stored_size {

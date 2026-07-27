@@ -20,7 +20,13 @@ use crate::providers::Provider;
 use crate::source::{PreparedFile, prepare_files};
 use crate::vault::Vault;
 
-const MAX_ARCHIVE_BATCH_CHUNKS: usize = 24;
+const MAX_FILE_BATCH_CHUNKS: usize = 4;
+
+struct ArchivedFile {
+    record: FileRecord,
+    unique_objects: HashSet<String>,
+    new_objects: HashMap<String, u64>,
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BackupReport {
@@ -107,22 +113,31 @@ pub fn backup(config_path: &Path, config: &Config) -> Result<BackupReport> {
         created_at.format("%Y%m%dT%H%M%S%.3fZ"),
         &uuid::Uuid::new_v4().simple().to_string()[..8]
     );
-    let mut files = Vec::with_capacity(prepared.len());
+    let archived = prepared
+        .par_iter()
+        .map(|prepared_file| {
+            archive_file(
+                &vault,
+                config.archive.chunk_size as usize,
+                config.archive.compression_level,
+                prepared_file,
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let mut files = Vec::with_capacity(archived.len());
     let mut unique_objects = HashSet::new();
     let mut new_objects = HashSet::new();
     let mut new_stored_bytes = 0_u64;
-
-    for prepared_file in &prepared {
-        let record = archive_file(
-            &vault,
-            config.archive.chunk_size as usize,
-            config.archive.compression_level,
-            prepared_file,
-            &mut unique_objects,
-            &mut new_objects,
-            &mut new_stored_bytes,
-        )?;
-        files.push(record);
+    for archived_file in archived {
+        unique_objects.extend(archived_file.unique_objects);
+        for (id, stored_size) in archived_file.new_objects {
+            if new_objects.insert(id) {
+                new_stored_bytes = new_stored_bytes
+                    .checked_add(stored_size)
+                    .context("stored byte count overflow")?;
+            }
+        }
+        files.push(archived_file.record);
     }
 
     let logical_bytes = files.iter().map(|file| file.size).sum();
@@ -308,21 +323,20 @@ fn archive_file(
     chunk_size: usize,
     compression_level: i32,
     prepared: &PreparedFile,
-    unique_objects: &mut HashSet<String>,
-    new_objects: &mut HashSet<String>,
-    new_stored_bytes: &mut u64,
-) -> Result<FileRecord> {
+) -> Result<ArchivedFile> {
     let file = File::open(&prepared.read_path)
         .with_context(|| format!("failed to read source {}", prepared.read_path.display()))?;
     let mut reader = BufReader::new(file);
     let mut file_hasher = blake3::Hasher::new();
     let mut chunks = Vec::new();
+    let mut unique_objects = HashSet::new();
+    let mut new_objects = HashMap::new();
     let mut size = 0_u64;
     let mut buffer = vec![0_u8; chunk_size];
     let batch_chunks = std::thread::available_parallelism()
         .map(std::num::NonZeroUsize::get)
         .unwrap_or(4)
-        .clamp(4, MAX_ARCHIVE_BATCH_CHUNKS);
+        .clamp(1, MAX_FILE_BATCH_CHUNKS);
 
     loop {
         let mut batch = Vec::with_capacity(batch_chunks);
@@ -372,10 +386,10 @@ fn archive_file(
                 .context("internal stored chunk result is missing")?
                 .clone();
             unique_objects.insert(stored.id.clone());
-            if stored.is_new && new_objects.insert(stored.id.clone()) {
-                *new_stored_bytes = new_stored_bytes
-                    .checked_add(stored.stored_size)
-                    .context("stored byte count overflow")?;
+            if stored.is_new {
+                new_objects
+                    .entry(stored.id.clone())
+                    .or_insert(stored.stored_size);
             }
             chunks.push(ChunkRecord {
                 id: stored.id,
@@ -385,16 +399,20 @@ fn archive_file(
         }
     }
 
-    Ok(FileRecord {
-        provider: prepared.provider,
-        logical_path: prepared.logical_path.clone(),
-        kind: prepared.kind,
-        size,
-        blake3: file_hasher.finalize().to_hex().to_string(),
-        modified_unix_seconds: prepared.modified_unix_seconds,
-        modified_subsec_nanos: prepared.modified_subsec_nanos,
-        unix_mode: prepared.unix_mode,
-        chunks,
+    Ok(ArchivedFile {
+        record: FileRecord {
+            provider: prepared.provider,
+            logical_path: prepared.logical_path.clone(),
+            kind: prepared.kind,
+            size,
+            blake3: file_hasher.finalize().to_hex().to_string(),
+            modified_unix_seconds: prepared.modified_unix_seconds,
+            modified_subsec_nanos: prepared.modified_subsec_nanos,
+            unix_mode: prepared.unix_mode,
+            chunks,
+        },
+        unique_objects,
+        new_objects,
     })
 }
 
