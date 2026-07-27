@@ -497,6 +497,38 @@ fn age_vault_encrypts_objects_and_manifests_and_recovers() {
         b"private transcript"
     );
 
+    let clone = temp.path().join("encrypted-clone");
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            config_path.to_str().unwrap(),
+            "clone",
+            clone.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let clone_config_path = clone.join("config.toml");
+    let clone_config = akeep::config::Config::load(&clone_config_path).unwrap();
+    assert_eq!(
+        clone_config.encryption.identity_file.as_ref(),
+        Some(&identity)
+    );
+    assert!(
+        !clone.join(identity.file_name().unwrap()).exists(),
+        "clone must not copy the age identity"
+    );
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            clone_config_path.to_str().unwrap(),
+            "fsck",
+            "HEAD",
+        ])
+        .assert()
+        .success();
+
     let hidden_identity = identity.with_extension("hidden");
     fs::rename(&identity, &hidden_identity).unwrap();
     Command::cargo_bin("akeep")
@@ -672,6 +704,136 @@ fn diff_reports_added_modified_and_removed_history_files() {
         .stdout(predicate::str::contains(
             "D  claude-code/projects/demo/removed.jsonl",
         ));
+}
+
+#[test]
+fn clone_creates_a_self_contained_repository_bundle() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.claude.join("projects/demo/session.jsonl"),
+        b"portable agent history",
+    )
+    .unwrap();
+    let commit = fixture.backup();
+    let destination = fixture.temp.path().join("clone");
+
+    let output = Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "clone",
+            destination.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: akeep::archive::CloneReport = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report.head, commit.snapshot_id);
+    assert!(report.repository_objects >= 3);
+    assert!(report.stored_bytes > 0);
+    assert_eq!(report.config, destination.join("config.toml"));
+    assert!(!destination.join(".akeep-clone-incomplete").exists());
+
+    let clone_config = akeep::config::Config::load(&report.config).unwrap();
+    assert_eq!(
+        clone_config.target,
+        akeep::config::TargetConfig::Filesystem {
+            path: destination.join("repository")
+        }
+    );
+    assert_eq!(clone_config.vault.state_path, destination.join("state"));
+
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args(["--config", report.config.to_str().unwrap(), "log", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(&commit.snapshot_id));
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args(["--config", report.config.to_str().unwrap(), "fsck", "HEAD"])
+        .assert()
+        .success();
+    let checkout = fixture.temp.path().join("clone-checkout");
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            report.config.to_str().unwrap(),
+            "checkout",
+            "HEAD",
+            "--to",
+            checkout.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read(checkout.join("claude-code/projects/demo/session.jsonl")).unwrap(),
+        b"portable agent history"
+    );
+
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "clone",
+            destination.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already exists"));
+
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "clone",
+            fixture.vault.join("nested-clone").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("overlaps repository/state path"));
+}
+
+#[test]
+fn failed_clone_keeps_an_incomplete_marker() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.claude.join("projects/demo/session.jsonl"),
+        b"history",
+    )
+    .unwrap();
+    let commit = fixture.backup();
+    fs::write(
+        fixture
+            .vault
+            .join("manifests")
+            .join(format!("{}.json", commit.snapshot_id)),
+        b"corrupt manifest",
+    )
+    .unwrap();
+    let destination = fixture.temp.path().join("failed-clone");
+
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "clone",
+            destination.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("failed to parse manifest"));
+    assert!(destination.join(".akeep-clone-incomplete").is_file());
 }
 
 struct Fixture {

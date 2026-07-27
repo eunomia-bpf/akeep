@@ -10,7 +10,7 @@ use filetime::FileTime;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Config, create_private_directory};
+use crate::config::{self, Config, TargetConfig, create_private_directory};
 use crate::doctor;
 use crate::manifest::{
     ArchiveDescriptor, ChunkRecord, FileRecord, MANIFEST_FORMAT_VERSION, Manifest, ProviderSummary,
@@ -142,6 +142,16 @@ pub struct FileChange {
     pub logical_path: String,
     pub old_size: Option<u64>,
     pub new_size: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CloneReport {
+    pub destination: PathBuf,
+    pub config: PathBuf,
+    pub repository_objects: u64,
+    pub stored_bytes: u64,
+    pub head: String,
+    pub duration_ms: u64,
 }
 
 pub fn backup(config_path: &Path, config: &Config, message: Option<&str>) -> Result<BackupReport> {
@@ -486,6 +496,56 @@ pub fn diff(config: &Config, from: &str, to: &str) -> Result<DiffReport> {
     })
 }
 
+pub fn clone_repository(config: &Config, destination: &Path) -> Result<CloneReport> {
+    let started = Instant::now();
+    let source = Vault::open(config)?;
+    let head = source
+        .latest_snapshot_id()?
+        .context("repository has no commits to clone")?;
+    prepare_clone_destination(source.filesystem_root(), source.state_root(), destination)?;
+
+    let marker = destination.join(".akeep-clone-incomplete");
+    drop(create_private_new_file(&marker)?);
+    let repository = destination.join("repository");
+    let state = destination.join("state");
+    create_private_directory(&repository)?;
+    create_private_directory(&state)?;
+    let repository = fs::canonicalize(&repository)
+        .with_context(|| format!("failed to resolve {}", repository.display()))?;
+    let state = fs::canonicalize(&state)
+        .with_context(|| format!("failed to resolve {}", state.display()))?;
+
+    let mut cloned_config = config.clone();
+    cloned_config.target = TargetConfig::Filesystem {
+        path: repository.clone(),
+    };
+    cloned_config.vault.state_path = state;
+    cloned_config.validate()?;
+
+    let copied = source.copy_repository_to(&repository)?;
+    let config_path = destination.join("config.toml");
+    config::write_new(&config_path, &cloned_config)?;
+
+    let clone = Vault::open(&cloned_config)?;
+    let manifest = clone.load_manifest("HEAD")?;
+    manifest.validate(cloned_config.vault.id)?;
+    if manifest.snapshot_id != head {
+        bail!("cloned HEAD is {}, expected {}", manifest.snapshot_id, head);
+    }
+    verify_object_presence(&clone, &manifest)?;
+    fs::remove_file(&marker)
+        .with_context(|| format!("failed to remove clone marker {}", marker.display()))?;
+
+    Ok(CloneReport {
+        destination: fs::canonicalize(destination).unwrap_or_else(|_| destination.to_path_buf()),
+        config: fs::canonicalize(&config_path).unwrap_or(config_path),
+        repository_objects: copied.objects,
+        stored_bytes: copied.stored_bytes,
+        head,
+        duration_ms: elapsed_millis(started),
+    })
+}
+
 fn empty_provider_diff(provider: Provider) -> ProviderDiff {
     ProviderDiff {
         provider,
@@ -728,6 +788,32 @@ fn prepare_recovery_target(
         create_private_directory(target)?;
     }
     Ok(())
+}
+
+fn prepare_clone_destination(
+    vault_root: Option<&Path>,
+    state_root: &Path,
+    destination: &Path,
+) -> Result<()> {
+    let resolved_destination = resolve_future_path(destination)?;
+    for protected in vault_root.into_iter().chain(std::iter::once(state_root)) {
+        let resolved = fs::canonicalize(protected)
+            .with_context(|| format!("failed to resolve {}", protected.display()))?;
+        if paths_overlap(&resolved, &resolved_destination) {
+            bail!(
+                "clone destination {} overlaps repository/state path {}; choose a separate directory",
+                destination.display(),
+                protected.display()
+            );
+        }
+    }
+    if destination.exists() {
+        bail!(
+            "clone destination already exists; choose a new directory: {}",
+            destination.display()
+        );
+    }
+    create_private_directory(destination)
 }
 
 fn resolve_future_path(path: &Path) -> Result<PathBuf> {

@@ -39,6 +39,12 @@ pub struct StoredChunk {
     pub is_new: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RepositoryCopyStats {
+    pub objects: u64,
+    pub stored_bytes: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct VaultMetadata {
@@ -310,6 +316,43 @@ impl Vault {
                     .with_context(|| format!("failed to parse manifest {key}"))
             })
             .collect()
+    }
+
+    pub fn copy_repository_to(&self, destination: &Path) -> Result<RepositoryCopyStats> {
+        let target = Storage::from_config(&crate::config::TargetConfig::Filesystem {
+            path: destination.to_path_buf(),
+        })?;
+        if !target.list("")?.is_empty() {
+            bail!(
+                "clone repository directory is not empty: {}",
+                destination.display()
+            );
+        }
+        let keys = self.storage.list("")?;
+        for required in ["vault.json", "refs/latest"] {
+            if !keys.iter().any(|key| key == required) {
+                bail!("source repository is missing {required}");
+            }
+        }
+
+        let mut stored_bytes = 0_u64;
+        for key in &keys {
+            let contents = self.storage.get(key)?;
+            let expected_hash = blake3::hash(&contents);
+            target.put(key, &contents, false)?;
+            let copied = target.get(key)?;
+            if copied.len() != contents.len() || blake3::hash(&copied) != expected_hash {
+                bail!("clone transport verification failed for repository object {key}");
+            }
+            stored_bytes = stored_bytes
+                .checked_add(contents.len() as u64)
+                .context("cloned repository byte count overflow")?;
+        }
+
+        Ok(RepositoryCopyStats {
+            objects: keys.len() as u64,
+            stored_bytes,
+        })
     }
 
     fn initialize_layout(&self) -> Result<()> {

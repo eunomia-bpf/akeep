@@ -297,14 +297,24 @@ pub fn initialize(
         sources: SourceOverrides::default(),
     };
     config.validate()?;
-
-    let parent = config_path
-        .parent()
-        .with_context(|| format!("configuration path {} has no parent", config_path.display()))?;
-    create_private_directory(parent)?;
-    write_private_new_file(config_path, toml::to_string_pretty(&config)?.as_bytes())?;
+    write_new(config_path, &config)?;
 
     Ok(config)
+}
+
+pub fn write_new(path: &Path, config: &Config) -> Result<()> {
+    config.validate()?;
+    if path.exists() {
+        bail!(
+            "configuration already exists at {}; refusing to overwrite it",
+            path.display()
+        );
+    }
+    let parent = path
+        .parent()
+        .with_context(|| format!("configuration path {} has no parent", path.display()))?;
+    create_private_directory(parent)?;
+    write_private_new_file(path, toml::to_string_pretty(config)?.as_bytes())
 }
 
 fn absolute_directory(path: &Path) -> Result<PathBuf> {

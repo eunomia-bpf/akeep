@@ -54,6 +54,22 @@ fn s3_backup_deduplicates_verifies_lists_and_recovers() {
         b"remote backup payload"
     );
 
+    let clone = fixture.temp.path().join("s3-clone");
+    fixture
+        .command()
+        .args(["clone"])
+        .arg(&clone)
+        .assert()
+        .success();
+    let clone_config = clone.join("config.toml");
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args(["--config", clone_config.to_str().unwrap(), "fsck", "HEAD"])
+        .assert()
+        .success();
+    assert!(clone.join("repository/refs/latest").is_file());
+    assert!(!clone.join(".akeep-clone-incomplete").exists());
+
     assert!(fixture.cloud.join("test-bucket/akeep/vault.json").is_file());
     assert!(
         fixture

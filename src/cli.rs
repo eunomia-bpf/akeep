@@ -54,6 +54,9 @@ pub enum Command {
     /// Compare two committed versions.
     Diff(DiffArgs),
 
+    /// Copy the active repository into a self-contained local bundle.
+    Clone(CloneArgs),
+
     /// Manage an optional automatic backup schedule.
     Schedule {
         #[command(subcommand)]
@@ -195,6 +198,17 @@ pub struct DiffArgs {
     /// Print only change kind and logical path.
     #[arg(long, conflicts_with = "json")]
     pub name_only: bool,
+
+    /// Emit stable machine-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct CloneArgs {
+    /// New directory for config.toml, repository/, and local state/.
+    #[arg(value_name = "DIRECTORY")]
+    pub directory: PathBuf,
 
     /// Emit stable machine-readable output.
     #[arg(long)]
@@ -516,6 +530,20 @@ pub fn run(cli: Cli) -> Result<()> {
                         );
                     }
                 }
+            }
+        }
+        Command::Clone(args) => {
+            let active = config::Config::load(&config_path)?;
+            let report = archive::clone_repository(&active, &args.directory)?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("Cloned repository to {}", report.destination.display());
+                println!("Config: {}", report.config.display());
+                println!("Repository objects: {}", report.repository_objects);
+                println!("Stored bytes: {}", report.stored_bytes);
+                println!("HEAD: {}", report.head);
+                println!("Duration: {} ms", report.duration_ms);
             }
         }
         Command::Schedule { command } => {
