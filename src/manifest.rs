@@ -16,6 +16,10 @@ pub struct Manifest {
     pub format_version: u32,
     pub vault_id: Uuid,
     pub snapshot_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
     pub created_at: DateTime<Utc>,
     pub hostname: String,
     pub archive: ArchiveDescriptor,
@@ -105,6 +109,15 @@ impl Manifest {
             );
         }
         validate_snapshot_id(&self.snapshot_id)?;
+        if let Some(parent) = &self.parent {
+            validate_snapshot_id(parent)?;
+            if parent == &self.snapshot_id {
+                bail!("manifest cannot name itself as its parent");
+            }
+        }
+        if let Some(message) = &self.message {
+            validate_commit_message(message)?;
+        }
         if self.archive.chunk_algorithm != "fixed" {
             bail!(
                 "unsupported chunk algorithm {}",
@@ -251,6 +264,19 @@ impl Manifest {
     }
 }
 
+pub fn validate_commit_message(message: &str) -> Result<()> {
+    if message.trim().is_empty() {
+        bail!("commit message must not be empty");
+    }
+    if message.len() > 1024 {
+        bail!("commit message must not exceed 1024 bytes");
+    }
+    if message.chars().any(char::is_control) {
+        bail!("commit message must not contain control characters");
+    }
+    Ok(())
+}
+
 pub fn validate_snapshot_id(snapshot_id: &str) -> Result<()> {
     if snapshot_id.is_empty()
         || snapshot_id.len() > 96
@@ -313,5 +339,14 @@ mod tests {
         assert!(validate_object_id(&"a".repeat(64)).is_ok());
         assert!(validate_object_id(&"A".repeat(64)).is_err());
         assert!(validate_object_id("short").is_err());
+    }
+
+    #[test]
+    fn validates_commit_messages() {
+        assert!(validate_commit_message("before refactor").is_ok());
+        assert!(validate_commit_message("").is_err());
+        assert!(validate_commit_message(" \t").is_err());
+        assert!(validate_commit_message("line one\nline two").is_err());
+        assert!(validate_commit_message(&"x".repeat(1025)).is_err());
     }
 }

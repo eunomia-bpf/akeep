@@ -14,7 +14,7 @@ use crate::config::{Config, create_private_directory};
 use crate::doctor;
 use crate::manifest::{
     ArchiveDescriptor, ChunkRecord, FileRecord, MANIFEST_FORMAT_VERSION, Manifest, ProviderSummary,
-    SnapshotStats, validate_logical_path,
+    SnapshotStats, validate_commit_message, validate_logical_path,
 };
 use crate::providers::Provider;
 use crate::source::{PreparedFile, prepare_files};
@@ -43,6 +43,8 @@ pub struct BackupReport {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SnapshotInfo {
     pub snapshot_id: String,
+    pub parent: Option<String>,
+    pub message: Option<String>,
     pub created_at: chrono::DateTime<Utc>,
     pub hostname: String,
     pub files: u64,
@@ -92,15 +94,19 @@ pub struct RecoveryReport {
     pub duration_ms: u64,
 }
 
-pub fn backup(config_path: &Path, config: &Config) -> Result<BackupReport> {
+pub fn backup(config_path: &Path, config: &Config, message: Option<&str>) -> Result<BackupReport> {
     let started = Instant::now();
+    if let Some(message) = message {
+        validate_commit_message(message)?;
+    }
     let diagnosis = doctor::inspect(config_path, config);
     if !diagnosis.healthy {
-        bail!("backup preflight failed: {}", diagnosis.errors.join("; "));
+        bail!("commit preflight failed: {}", diagnosis.errors.join("; "));
     }
 
     let vault = Vault::open(config)?;
     let _lock = vault.acquire_backup_lock()?;
+    let parent = vault.latest_snapshot_id()?;
     let staging = vault.staging_directory()?;
     let prepared = prepare_files(config, staging.path())?;
     if prepared.is_empty() {
@@ -155,6 +161,8 @@ pub fn backup(config_path: &Path, config: &Config) -> Result<BackupReport> {
         format_version: MANIFEST_FORMAT_VERSION,
         vault_id: config.vault.id,
         snapshot_id: snapshot_id.clone(),
+        parent,
+        message: message.map(str::to_string),
         created_at,
         hostname: gethostname::gethostname().to_string_lossy().into_owned(),
         archive: ArchiveDescriptor {
@@ -209,6 +217,8 @@ pub fn snapshots(config: &Config) -> Result<Vec<SnapshotInfo>> {
         let full_verified_at = vault.full_verification_time(&manifest.snapshot_id)?;
         snapshots.push(SnapshotInfo {
             snapshot_id: manifest.snapshot_id,
+            parent: manifest.parent,
+            message: manifest.message,
             created_at: manifest.created_at,
             hostname: manifest.hostname,
             files: manifest.stats.files,

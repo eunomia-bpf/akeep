@@ -43,12 +43,12 @@ fn backup_verify_list_and_recover_round_trip() {
         .args([
             "--config",
             fixture.config.to_str().unwrap(),
-            "verify",
+            "fsck",
             "latest",
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Verified recovery point"));
+        .stdout(predicate::str::contains("Checked commit"));
     let snapshots = snapshot_list(&fixture);
     assert_eq!(
         snapshots[0].verification,
@@ -61,7 +61,7 @@ fn backup_verify_list_and_recover_round_trip() {
         .args([
             "--config",
             fixture.config.to_str().unwrap(),
-            "snapshots",
+            "log",
             "--json",
         ])
         .assert()
@@ -74,7 +74,7 @@ fn backup_verify_list_and_recover_round_trip() {
         .args([
             "--config",
             fixture.config.to_str().unwrap(),
-            "recover",
+            "checkout",
             "latest",
             "--to",
             recovery.to_str().unwrap(),
@@ -125,7 +125,7 @@ fn recover_can_select_one_provider_without_marking_full_verification() {
         .args([
             "--config",
             fixture.config.to_str().unwrap(),
-            "recover",
+            "checkout",
             "latest",
             "--provider",
             "claude-code",
@@ -175,7 +175,7 @@ fn recover_rejects_a_provider_absent_from_the_snapshot_before_creating_target() 
         .args([
             "--config",
             fixture.config.to_str().unwrap(),
-            "recover",
+            "checkout",
             "latest",
             "--provider",
             "codex",
@@ -211,7 +211,7 @@ fn full_verify_detects_corruption() {
         .args([
             "--config",
             fixture.config.to_str().unwrap(),
-            "verify",
+            "fsck",
             "latest",
         ])
         .assert()
@@ -237,7 +237,7 @@ fn repeated_chunks_in_one_parallel_batch_are_stored_once() {
         .args([
             "--config",
             fixture.config.to_str().unwrap(),
-            "verify",
+            "fsck",
             "latest",
         ])
         .assert()
@@ -268,7 +268,7 @@ fn failed_recovery_keeps_an_incomplete_marker() {
         .args([
             "--config",
             fixture.config.to_str().unwrap(),
-            "recover",
+            "checkout",
             "latest",
             "--to",
             recovery.to_str().unwrap(),
@@ -309,7 +309,7 @@ fn full_verify_detects_reordered_objects() {
         .args([
             "--config",
             fixture.config.to_str().unwrap(),
-            "verify",
+            "fsck",
             "latest",
         ])
         .assert()
@@ -335,7 +335,7 @@ fn recover_refuses_a_nonempty_target() {
         .args([
             "--config",
             fixture.config.to_str().unwrap(),
-            "recover",
+            "checkout",
             "latest",
             "--to",
             recovery.to_str().unwrap(),
@@ -371,7 +371,7 @@ fn recover_refuses_a_symlinked_target() {
         .args([
             "--config",
             fixture.config.to_str().unwrap(),
-            "recover",
+            "checkout",
             "latest",
             "--to",
             recovery_link.to_str().unwrap(),
@@ -398,7 +398,7 @@ fn recover_refuses_a_target_inside_the_vault() {
         .args([
             "--config",
             fixture.config.to_str().unwrap(),
-            "recover",
+            "checkout",
             "latest",
             "--to",
             recovery.to_str().unwrap(),
@@ -453,7 +453,7 @@ fn age_vault_encrypts_objects_and_manifests_and_recovers() {
         .args([
             "--config",
             config_path.to_str().unwrap(),
-            "backup",
+            "commit",
             "--json",
         ])
         .output()
@@ -477,12 +477,7 @@ fn age_vault_encrypts_objects_and_manifests_and_recovers() {
     let recovery = temp.path().join("recovery");
     Command::cargo_bin("akeep")
         .unwrap()
-        .args([
-            "--config",
-            config_path.to_str().unwrap(),
-            "verify",
-            "latest",
-        ])
+        .args(["--config", config_path.to_str().unwrap(), "fsck", "latest"])
         .assert()
         .success();
     Command::cargo_bin("akeep")
@@ -490,7 +485,7 @@ fn age_vault_encrypts_objects_and_manifests_and_recovers() {
         .args([
             "--config",
             config_path.to_str().unwrap(),
-            "recover",
+            "checkout",
             "latest",
             "--to",
             recovery.to_str().unwrap(),
@@ -506,10 +501,86 @@ fn age_vault_encrypts_objects_and_manifests_and_recovers() {
     fs::rename(&identity, &hidden_identity).unwrap();
     Command::cargo_bin("akeep")
         .unwrap()
-        .args(["--config", config_path.to_str().unwrap(), "verify"])
+        .args(["--config", config_path.to_str().unwrap(), "fsck"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("age identity"));
+}
+
+#[test]
+fn commit_history_supports_messages_head_ancestors_and_clean_commands() {
+    let fixture = Fixture::new();
+    let history = fixture.claude.join("projects/demo/session.jsonl");
+    fs::write(&history, b"first version").unwrap();
+
+    let first_output = Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "commit",
+            "-m",
+            "initial agent context",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(first_output.status.success());
+    let first: akeep::archive::BackupReport = serde_json::from_slice(&first_output.stdout).unwrap();
+
+    fs::write(&history, b"second version").unwrap();
+    let second_output = Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "commit",
+            "--message",
+            "after implementation",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(second_output.status.success());
+    let second: akeep::archive::BackupReport =
+        serde_json::from_slice(&second_output.stdout).unwrap();
+
+    let commits = snapshot_list(&fixture);
+    assert_eq!(commits[0].snapshot_id, second.snapshot_id);
+    assert_eq!(
+        commits[0].parent.as_deref(),
+        Some(first.snapshot_id.as_str())
+    );
+    assert_eq!(commits[0].message.as_deref(), Some("after implementation"));
+    assert_eq!(commits[1].parent, None);
+    assert_eq!(commits[1].message.as_deref(), Some("initial agent context"));
+
+    let checkout = fixture.temp.path().join("head-parent");
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "checkout",
+            "HEAD~1",
+            "--to",
+            checkout.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read(checkout.join("claude-code/projects/demo/session.jsonl")).unwrap(),
+        b"first version"
+    );
+
+    for old_command in ["doctor", "backup", "snapshots", "verify", "recover"] {
+        Command::cargo_bin("akeep")
+            .unwrap()
+            .arg(old_command)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("unrecognized subcommand"));
+    }
 }
 
 struct Fixture {
@@ -563,7 +634,7 @@ impl Fixture {
             .args([
                 "--config",
                 self.config.to_str().unwrap(),
-                "backup",
+                "commit",
                 "--json",
             ])
             .output()
@@ -588,7 +659,7 @@ fn snapshot_list(fixture: &Fixture) -> Vec<akeep::archive::SnapshotInfo> {
         .args([
             "--config",
             fixture.config.to_str().unwrap(),
-            "snapshots",
+            "log",
             "--json",
         ])
         .output()

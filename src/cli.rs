@@ -36,20 +36,20 @@ pub enum Command {
         command: ConfigCommand,
     },
 
-    /// Diagnose provider coverage and vault readiness.
-    Doctor(DoctorArgs),
+    /// Show provider coverage and repository readiness.
+    Status(StatusArgs),
 
-    /// Create an incremental recovery point.
-    Backup(OutputArgs),
+    /// Save a new version of discovered agent history.
+    Commit(CommitArgs),
 
-    /// List completed recovery points.
-    Snapshots(OutputArgs),
+    /// List committed versions.
+    Log(OutputArgs),
 
-    /// Verify a recovery point.
-    Verify(VerifyArgs),
+    /// Check repository structure and archived content.
+    Fsck(FsckArgs),
 
-    /// Recover a recovery point into an empty directory.
-    Recover(RecoverArgs),
+    /// Restore a version into an empty directory.
+    Checkout(CheckoutArgs),
 
     /// Manage an optional automatic backup schedule.
     Schedule {
@@ -122,7 +122,7 @@ pub enum ConfigCommand {
 }
 
 #[derive(Debug, Args)]
-pub struct DoctorArgs {
+pub struct StatusArgs {
     /// Emit a stable machine-readable report.
     #[arg(long)]
     pub json: bool,
@@ -136,10 +136,21 @@ pub struct OutputArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct VerifyArgs {
-    /// Snapshot ID or `latest`.
-    #[arg(default_value = "latest")]
-    pub snapshot: String,
+pub struct CommitArgs {
+    /// Short description of this version.
+    #[arg(short, long, value_name = "MESSAGE")]
+    pub message: Option<String>,
+
+    /// Emit stable machine-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct FsckArgs {
+    /// Commit ID, `HEAD`, or an ancestor such as `HEAD~1`.
+    #[arg(default_value = "HEAD")]
+    pub commit: String,
 
     /// Only check manifest structure and object presence.
     #[arg(long)]
@@ -151,10 +162,10 @@ pub struct VerifyArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct RecoverArgs {
-    /// Snapshot ID or `latest`.
-    #[arg(default_value = "latest")]
-    pub snapshot: String,
+pub struct CheckoutArgs {
+    /// Commit ID, `HEAD`, or an ancestor such as `HEAD~1`.
+    #[arg(default_value = "HEAD")]
+    pub commit: String,
 
     /// Recover only one provider (for a smaller, provider-native drill).
     #[arg(long, value_enum)]
@@ -173,7 +184,7 @@ pub struct RecoverArgs {
 pub enum ScheduleCommand {
     /// Install and start a persistent systemd user timer.
     Install {
-        /// Schedule one backup each week.
+        /// Schedule one commit each week.
         #[arg(long, required = true)]
         weekly: bool,
 
@@ -219,8 +230,8 @@ pub struct SearchArgs {
 
 #[derive(Debug, Args)]
 pub struct ExportArgs {
-    /// Snapshot ID or `latest`.
-    #[arg(default_value = "latest")]
+    /// Commit ID, `HEAD`, or an ancestor such as `HEAD~1`.
+    #[arg(default_value = "HEAD")]
     pub snapshot: String,
 
     /// Export representation.
@@ -238,8 +249,8 @@ pub struct ExportArgs {
 
 #[derive(Debug, Args)]
 pub struct HandoffArgs {
-    /// Snapshot ID or `latest`.
-    #[arg(default_value = "latest")]
+    /// Commit ID, `HEAD`, or an ancestor such as `HEAD~1`.
+    #[arg(default_value = "HEAD")]
     pub snapshot: String,
 
     /// Agent whose archived context is being handed off.
@@ -325,7 +336,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 }
                 return Err(error).context("vault initialization failed and was rolled back");
             }
-            println!("Initialized Akeep vault {}", created.vault.id);
+            println!("Initialized Akeep repository {}", created.vault.id);
             println!("Config: {}", config_path.display());
             match &created.target {
                 TargetConfig::Filesystem { path } => {
@@ -353,7 +364,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 print!("{}", toml::to_string_pretty(&active)?);
             }
         },
-        Command::Doctor(args) => {
+        Command::Status(args) => {
             let active = config::Config::load(&config_path)?;
             let report = doctor::inspect(&config_path, &active);
             if args.json {
@@ -362,16 +373,16 @@ pub fn run(cli: Cli) -> Result<()> {
                 doctor::print_human(&report);
             }
             if !report.healthy {
-                bail!("doctor found one or more blocking problems");
+                bail!("status found one or more blocking problems");
             }
         }
-        Command::Backup(args) => {
+        Command::Commit(args) => {
             let active = config::Config::load(&config_path)?;
-            let report = archive::backup(&config_path, &active)?;
+            let report = archive::backup(&config_path, &active, args.message.as_deref())?;
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
-                println!("Created recovery point {}", report.snapshot_id);
+                println!("Committed agent history {}", report.snapshot_id);
                 println!("Files: {}", report.files);
                 println!("Logical bytes: {}", report.logical_bytes);
                 println!("Unique objects: {}", report.unique_objects);
@@ -382,13 +393,13 @@ pub fn run(cli: Cli) -> Result<()> {
                 println!("Duration: {} ms", report.duration_ms);
             }
         }
-        Command::Snapshots(args) => {
+        Command::Log(args) => {
             let active = config::Config::load(&config_path)?;
             let snapshots = archive::snapshots(&active)?;
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&snapshots)?);
             } else if snapshots.is_empty() {
-                println!("No recovery points.");
+                println!("No commits.");
             } else {
                 for snapshot in snapshots {
                     let providers = snapshot
@@ -397,27 +408,29 @@ pub fn run(cli: Cli) -> Result<()> {
                         .map(ToString::to_string)
                         .collect::<Vec<_>>()
                         .join(",");
+                    let message = snapshot.message.as_deref().unwrap_or("-");
                     println!(
-                        "{}  {}  [{}]  {} files  {} logical bytes  {} stored bytes  {}",
+                        "{}  {}  [{}]  {} files  {} logical bytes  {} stored bytes  {}  {}",
                         snapshot.snapshot_id,
                         snapshot.hostname,
                         providers,
                         snapshot.files,
                         snapshot.logical_bytes,
                         snapshot.stored_bytes,
-                        snapshot.verification
+                        snapshot.verification,
+                        message
                     );
                 }
             }
         }
-        Command::Verify(args) => {
+        Command::Fsck(args) => {
             let active = config::Config::load(&config_path)?;
-            let report = archive::verify(&active, &args.snapshot, !args.quick)?;
+            let report = archive::verify(&active, &args.commit, !args.quick)?;
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
                 println!(
-                    "Verified recovery point {} ({}, {} files, {} bytes)",
+                    "Checked commit {} ({}, {} files, {} bytes)",
                     report.snapshot_id,
                     if report.full { "full" } else { "quick" },
                     report.files,
@@ -426,13 +439,13 @@ pub fn run(cli: Cli) -> Result<()> {
                 println!("Duration: {} ms", report.duration_ms);
             }
         }
-        Command::Recover(args) => {
+        Command::Checkout(args) => {
             let active = config::Config::load(&config_path)?;
-            let report = archive::recover(&active, &args.snapshot, &args.to, args.provider)?;
+            let report = archive::recover(&active, &args.commit, &args.to, args.provider)?;
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
-                println!("Recovered {}", report.snapshot_id);
+                println!("Checked out {}", report.snapshot_id);
                 if let Some(provider) = report.provider {
                     println!("Provider: {provider}");
                 }

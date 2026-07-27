@@ -275,11 +275,27 @@ impl Vault {
 
     pub fn load_manifest(&self, reference: &str) -> Result<Manifest> {
         let snapshot_id = self.resolve_reference(reference)?;
+        self.load_manifest_by_id(&snapshot_id)
+    }
+
+    pub fn load_manifest_by_id(&self, snapshot_id: &str) -> Result<Manifest> {
         let key = self.manifest_key(&snapshot_id)?;
         let encoded = self.storage.get(&key)?;
         let plaintext = self.codec.decrypt(&encoded)?;
         serde_json::from_slice(&plaintext)
             .with_context(|| format!("failed to parse manifest {snapshot_id}"))
+    }
+
+    pub fn latest_snapshot_id(&self) -> Result<Option<String>> {
+        if self.storage.metadata("refs/latest")?.is_none() {
+            return Ok(None);
+        }
+        let encoded = self.storage.get("refs/latest")?;
+        let snapshot_id = std::str::from_utf8(&encoded)
+            .context("HEAD reference is not UTF-8")?
+            .trim();
+        validate_snapshot_id(snapshot_id)?;
+        Ok(Some(snapshot_id.to_string()))
     }
 
     pub fn list_manifests(&self) -> Result<Vec<Manifest>> {
@@ -328,19 +344,28 @@ impl Vault {
     }
 
     fn resolve_reference(&self, reference: &str) -> Result<String> {
-        if reference != "latest" {
-            validate_snapshot_id(reference)?;
-            return Ok(reference.to_string());
+        if matches!(reference, "HEAD" | "latest") {
+            return self
+                .latest_snapshot_id()?
+                .context("repository has no commits");
         }
-        let encoded = self
-            .storage
-            .get("refs/latest")
-            .context("no latest recovery point")?;
-        let snapshot_id = std::str::from_utf8(&encoded)
-            .context("latest recovery-point reference is not UTF-8")?;
-        let snapshot_id = snapshot_id.trim();
-        validate_snapshot_id(snapshot_id)?;
-        Ok(snapshot_id.to_string())
+        if let Some(distance) = reference.strip_prefix("HEAD~") {
+            let distance = distance
+                .parse::<usize>()
+                .with_context(|| format!("invalid commit reference {reference:?}"))?;
+            let mut snapshot_id = self
+                .latest_snapshot_id()?
+                .context("repository has no commits")?;
+            for _ in 0..distance {
+                let manifest = self.load_manifest_by_id(&snapshot_id)?;
+                snapshot_id = manifest.parent.with_context(|| {
+                    format!("commit reference {reference:?} is outside available history")
+                })?;
+            }
+            return Ok(snapshot_id);
+        }
+        validate_snapshot_id(reference)?;
+        Ok(reference.to_string())
     }
 
     fn manifest_key(&self, snapshot_id: &str) -> Result<String> {
@@ -471,6 +496,8 @@ mod tests {
             format_version: MANIFEST_FORMAT_VERSION,
             vault_id: config.vault.id,
             snapshot_id: "snapshot-1".to_string(),
+            parent: None,
+            message: None,
             created_at: Utc::now(),
             hostname: "test".to_string(),
             archive: ArchiveDescriptor {

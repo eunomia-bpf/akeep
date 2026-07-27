@@ -183,7 +183,7 @@ pub fn inspect(config_path: &Path, config: &Config) -> DoctorReport {
 }
 
 pub fn print_human(report: &DoctorReport) {
-    println!("Akeep doctor");
+    println!("Akeep status");
     println!("Config: {}", report.config_path.display());
     println!("Target: {}", report.target);
     if let Some(status) = &report.storage_versioning {

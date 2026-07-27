@@ -133,12 +133,12 @@ fn uninstall_with(vault_id: Uuid, backend: &SystemdBackend) -> Result<ScheduleRe
 fn render_service(unit_name: &str, executable: &Path, config_path: &Path) -> Result<String> {
     Ok(format!(
         "{GENERATED_HEADER}[Unit]\n\
-         Description=Akeep verified coding-agent backup ({unit_name})\n\
+         Description=Akeep agent-history commit ({unit_name})\n\
          Documentation=https://github.com/eunomia-bpf/akeep\n\
          ConditionPathExists={}\n\n\
          [Service]\n\
          Type=oneshot\n\
-         ExecStart={} --config {} backup\n\
+         ExecStart={} --config {} commit\n\
          Nice=10\n\
          IOSchedulingClass=idle\n\
          IOSchedulingPriority=7\n\
@@ -157,7 +157,7 @@ fn render_timer(unit_name: &str) -> String {
         .unwrap_or_else(|| unit_name.to_string());
     format!(
         "{GENERATED_HEADER}[Unit]\n\
-         Description=Weekly Akeep verified coding-agent backup\n\n\
+         Description=Weekly Akeep agent-history commit\n\n\
          [Timer]\n\
          OnCalendar=weekly\n\
          Persistent=true\n\

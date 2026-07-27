@@ -61,7 +61,7 @@ fn archives_and_recovers_a_multichunk_scale_fixture_incrementally() {
         .args([
             "--config",
             config.to_str().unwrap(),
-            "recover",
+            "checkout",
             "latest",
             "--to",
             recovery.to_str().unwrap(),
@@ -81,7 +81,7 @@ fn archives_and_recovers_a_multichunk_scale_fixture_incrementally() {
 fn backup(config: &Path) -> akeep::archive::BackupReport {
     let output = Command::cargo_bin("akeep")
         .unwrap()
-        .args(["--config", config.to_str().unwrap(), "backup", "--json"])
+        .args(["--config", config.to_str().unwrap(), "commit", "--json"])
         .output()
         .unwrap();
     assert!(

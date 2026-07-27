@@ -39,7 +39,7 @@ fn doctor_reports_discovered_providers_as_json() {
         .args([
             "--config",
             config_path.to_str().unwrap(),
-            "doctor",
+            "status",
             "--json",
         ])
         .assert()
@@ -79,7 +79,7 @@ fn doctor_fails_when_target_overlaps_a_source() {
 
     Command::cargo_bin("akeep")
         .unwrap()
-        .args(["--config", config_path.to_str().unwrap(), "doctor"])
+        .args(["--config", config_path.to_str().unwrap(), "status"])
         .assert()
         .failure()
         .stdout(predicate::str::contains("overlaps provider root"))

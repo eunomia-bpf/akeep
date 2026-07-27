@@ -197,7 +197,7 @@ impl Fixture {
     }
 
     fn backup(&self) -> akeep::archive::BackupReport {
-        let output = self.command().args(["backup", "--json"]).output().unwrap();
+        let output = self.command().args(["commit", "--json"]).output().unwrap();
         assert!(
             output.status.success(),
             "{}",

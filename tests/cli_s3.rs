@@ -32,20 +32,20 @@ fn s3_backup_deduplicates_verifies_lists_and_recovers() {
 
     fixture
         .command()
-        .args(["snapshots", "--json"])
+        .args(["log", "--json"])
         .assert()
         .success()
         .stdout(predicate::str::contains(&first.snapshot_id));
     fixture
         .command()
-        .args(["verify", "latest"])
+        .args(["fsck", "latest"])
         .assert()
         .success();
 
     let recovery = fixture.temp.path().join("recovery");
     fixture
         .command()
-        .args(["recover", "latest", "--to"])
+        .args(["checkout", "latest", "--to"])
         .arg(&recovery)
         .assert()
         .success();
@@ -83,28 +83,28 @@ fn failed_s3_upload_never_publishes_a_recovery_point_and_retry_succeeds() {
     fixture
         .command()
         .env("FAKE_S3_FAIL_UPLOAD_CONTAINS", "objects/")
-        .args(["backup"])
+        .args(["commit"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("injected upload failure"));
     fixture
         .command()
-        .args(["snapshots"])
+        .args(["log"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("No recovery points."));
+        .stdout(predicate::str::contains("No commits."));
     fixture
         .command()
-        .args(["verify", "latest"])
+        .args(["fsck", "latest"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("no latest recovery point"));
+        .stderr(predicate::str::contains("repository has no commits"));
 
     let recovered = fixture.backup(None);
     assert!(recovered.new_objects > 0);
     fixture
         .command()
-        .args(["verify", "latest"])
+        .args(["fsck", "latest"])
         .assert()
         .success();
 }
@@ -223,7 +223,7 @@ impl S3Fixture {
         if let Some(failure) = failure {
             command.env("FAKE_S3_FAIL_UPLOAD_CONTAINS", failure);
         }
-        let output = command.args(["backup", "--json"]).output().unwrap();
+        let output = command.args(["commit", "--json"]).output().unwrap();
         assert!(
             output.status.success(),
             "{}",

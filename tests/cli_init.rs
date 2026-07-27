@@ -21,7 +21,7 @@ fn init_creates_a_private_valid_configuration() {
         ])
         .assert()
         .success()
-        .stdout(predicate::str::contains("Initialized Akeep vault"))
+        .stdout(predicate::str::contains("Initialized Akeep repository"))
         .stdout(predicate::str::contains("Encryption: none"));
 
     assert!(vault.is_dir());
