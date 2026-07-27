@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -7,6 +7,7 @@ use std::time::Instant;
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use filetime::FileTime;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Config, create_private_directory};
@@ -18,6 +19,8 @@ use crate::manifest::{
 use crate::providers::Provider;
 use crate::source::{PreparedFile, prepare_files};
 use crate::vault::Vault;
+
+const ARCHIVE_BATCH_CHUNKS: usize = 8;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BackupReport {
@@ -215,7 +218,7 @@ pub fn snapshots(config: &Config) -> Result<Vec<SnapshotInfo>> {
             full_verified_at,
         });
     }
-    snapshots.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.created_at));
     Ok(snapshots)
 }
 
@@ -288,27 +291,64 @@ fn archive_file(
     let mut buffer = vec![0_u8; chunk_size];
 
     loop {
-        let read = read_full_chunk(&mut reader, &mut buffer)?;
-        if read == 0 {
+        let mut batch = Vec::with_capacity(ARCHIVE_BATCH_CHUNKS);
+        for _ in 0..ARCHIVE_BATCH_CHUNKS {
+            let read = read_full_chunk(&mut reader, &mut buffer)?;
+            if read == 0 {
+                break;
+            }
+            let raw = buffer[..read].to_vec();
+            file_hasher.update(&raw);
+            size = size
+                .checked_add(read as u64)
+                .context("source file size overflow")?;
+            batch.push(raw);
+        }
+        if batch.is_empty() {
             break;
         }
-        let raw = &buffer[..read];
-        file_hasher.update(raw);
-        size = size
-            .checked_add(read as u64)
-            .context("source file size overflow")?;
-        let stored = vault.store_chunk(raw, compression_level)?;
-        unique_objects.insert(stored.id.clone());
-        if stored.is_new && new_objects.insert(stored.id.clone()) {
-            *new_stored_bytes = new_stored_bytes
-                .checked_add(stored.stored_size)
-                .context("stored byte count overflow")?;
+
+        let mut first_index_by_id = HashMap::new();
+        let batch_ids = batch
+            .iter()
+            .enumerate()
+            .map(|(index, raw)| {
+                let id = blake3::hash(raw).to_hex().to_string();
+                first_index_by_id.entry(id.clone()).or_insert(index);
+                id
+            })
+            .collect::<Vec<_>>();
+        let unique_indices = first_index_by_id.values().copied().collect::<Vec<_>>();
+        let stored_unique = unique_indices
+            .par_iter()
+            .map(|index| {
+                vault
+                    .store_chunk(&batch[*index], compression_level)
+                    .map(|stored| (*index, stored))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let stored_by_index = stored_unique.into_iter().collect::<HashMap<_, _>>();
+
+        for (index, raw) in batch.iter().enumerate() {
+            let first_index = *first_index_by_id
+                .get(&batch_ids[index])
+                .context("internal chunk batch index is missing")?;
+            let stored = stored_by_index
+                .get(&first_index)
+                .context("internal stored chunk result is missing")?
+                .clone();
+            unique_objects.insert(stored.id.clone());
+            if stored.is_new && new_objects.insert(stored.id.clone()) {
+                *new_stored_bytes = new_stored_bytes
+                    .checked_add(stored.stored_size)
+                    .context("stored byte count overflow")?;
+            }
+            chunks.push(ChunkRecord {
+                id: stored.id,
+                raw_size: raw.len() as u64,
+                stored_size: stored.stored_size,
+            });
         }
-        chunks.push(ChunkRecord {
-            id: stored.id,
-            raw_size: read as u64,
-            stored_size: stored.stored_size,
-        });
     }
 
     Ok(FileRecord {

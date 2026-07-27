@@ -42,7 +42,7 @@ pub fn rebuild(config: &Config) -> Result<IndexReport> {
     for manifest in &manifests {
         manifest.validate(config.vault.id)?;
     }
-    manifests.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    manifests.sort_by_key(|manifest| std::cmp::Reverse(manifest.created_at));
     if manifests.is_empty() {
         bail!("no recovery points are available to index");
     }

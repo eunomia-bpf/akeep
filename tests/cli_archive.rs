@@ -134,6 +134,31 @@ fn full_verify_detects_corruption() {
 }
 
 #[test]
+fn repeated_chunks_in_one_parallel_batch_are_stored_once() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.claude.join("projects/demo/session.jsonl"),
+        b"abcdabcdabcdabcdabcdabcdabcdabcd",
+    )
+    .unwrap();
+    let backup = fixture.backup();
+
+    assert_eq!(backup.chunk_references, 8);
+    assert_eq!(backup.unique_objects, 1);
+    assert_eq!(backup.new_objects, 1);
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "verify",
+            "latest",
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
 fn failed_recovery_keeps_an_incomplete_marker() {
     let fixture = Fixture::new();
     fs::write(
