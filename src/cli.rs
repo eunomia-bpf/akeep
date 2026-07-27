@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::{Args, Parser, Subcommand};
 
 use crate::config::{self, EncryptionMode};
+use crate::doctor;
 
 #[derive(Debug, Parser)]
 #[command(name = "akeep", version, about)]
@@ -26,6 +27,9 @@ pub enum Command {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+
+    /// Diagnose provider coverage and vault readiness.
+    Doctor(DoctorArgs),
 }
 
 #[derive(Debug, Args)]
@@ -48,6 +52,13 @@ pub enum ConfigCommand {
     Show,
 }
 
+#[derive(Debug, Args)]
+pub struct DoctorArgs {
+    /// Emit a stable machine-readable report.
+    #[arg(long)]
+    pub json: bool,
+}
+
 pub fn run(cli: Cli) -> Result<()> {
     let config_path = cli.config.unwrap_or(config::default_config_path()?);
 
@@ -67,6 +78,18 @@ pub fn run(cli: Cli) -> Result<()> {
                 print!("{}", toml::to_string_pretty(&active)?);
             }
         },
+        Command::Doctor(args) => {
+            let active = config::Config::load(&config_path)?;
+            let report = doctor::inspect(&config_path, &active);
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                doctor::print_human(&report);
+            }
+            if !report.healthy {
+                bail!("doctor found one or more blocking problems");
+            }
+        }
     }
 
     Ok(())
