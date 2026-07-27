@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -92,6 +92,56 @@ pub struct RecoveryReport {
     pub files: u64,
     pub logical_bytes: u64,
     pub duration_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DiffReport {
+    pub from: String,
+    pub to: String,
+    pub files_added: u64,
+    pub files_modified: u64,
+    pub files_removed: u64,
+    pub bytes_from: u64,
+    pub bytes_to: u64,
+    pub providers: Vec<ProviderDiff>,
+    pub changes: Vec<FileChange>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProviderDiff {
+    pub provider: Provider,
+    pub files_added: u64,
+    pub files_modified: u64,
+    pub files_removed: u64,
+    pub bytes_from: u64,
+    pub bytes_to: u64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FileChangeKind {
+    Added,
+    Modified,
+    Removed,
+}
+
+impl std::fmt::Display for FileChangeKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Added => "A",
+            Self::Modified => "M",
+            Self::Removed => "D",
+        })
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct FileChange {
+    pub kind: FileChangeKind,
+    pub provider: Provider,
+    pub logical_path: String,
+    pub old_size: Option<u64>,
+    pub new_size: Option<u64>,
 }
 
 pub fn backup(config_path: &Path, config: &Config, message: Option<&str>) -> Result<BackupReport> {
@@ -328,6 +378,123 @@ pub fn recover(
         logical_bytes,
         duration_ms: elapsed_millis(started),
     })
+}
+
+pub fn diff(config: &Config, from: &str, to: &str) -> Result<DiffReport> {
+    let vault = Vault::open(config)?;
+    let before = vault.load_manifest(from)?;
+    let after = vault.load_manifest(to)?;
+    before.validate(config.vault.id)?;
+    after.validate(config.vault.id)?;
+
+    let before_files = before
+        .files
+        .iter()
+        .map(|file| (file.logical_path.as_str(), file))
+        .collect::<BTreeMap<_, _>>();
+    let after_files = after
+        .files
+        .iter()
+        .map(|file| (file.logical_path.as_str(), file))
+        .collect::<BTreeMap<_, _>>();
+    let paths = before_files
+        .keys()
+        .chain(after_files.keys())
+        .copied()
+        .collect::<BTreeSet<_>>();
+
+    let mut changes = Vec::new();
+    for path in paths {
+        let change = match (before_files.get(path), after_files.get(path)) {
+            (None, Some(file)) => Some(FileChange {
+                kind: FileChangeKind::Added,
+                provider: file.provider,
+                logical_path: path.to_string(),
+                old_size: None,
+                new_size: Some(file.size),
+            }),
+            (Some(file), None) => Some(FileChange {
+                kind: FileChangeKind::Removed,
+                provider: file.provider,
+                logical_path: path.to_string(),
+                old_size: Some(file.size),
+                new_size: None,
+            }),
+            (Some(old), Some(new)) if old != new => Some(FileChange {
+                kind: FileChangeKind::Modified,
+                provider: new.provider,
+                logical_path: path.to_string(),
+                old_size: Some(old.size),
+                new_size: Some(new.size),
+            }),
+            _ => None,
+        };
+        if let Some(change) = change {
+            changes.push(change);
+        }
+    }
+
+    let mut provider_diffs = BTreeMap::<Provider, ProviderDiff>::new();
+    for file in &before.files {
+        let summary = provider_diffs
+            .entry(file.provider)
+            .or_insert_with(|| empty_provider_diff(file.provider));
+        summary.bytes_from = summary
+            .bytes_from
+            .checked_add(file.size)
+            .context("provider byte count overflow")?;
+    }
+    for file in &after.files {
+        let summary = provider_diffs
+            .entry(file.provider)
+            .or_insert_with(|| empty_provider_diff(file.provider));
+        summary.bytes_to = summary
+            .bytes_to
+            .checked_add(file.size)
+            .context("provider byte count overflow")?;
+    }
+    for change in &changes {
+        let summary = provider_diffs
+            .entry(change.provider)
+            .or_insert_with(|| empty_provider_diff(change.provider));
+        match change.kind {
+            FileChangeKind::Added => summary.files_added += 1,
+            FileChangeKind::Modified => summary.files_modified += 1,
+            FileChangeKind::Removed => summary.files_removed += 1,
+        }
+    }
+
+    Ok(DiffReport {
+        from: before.snapshot_id,
+        to: after.snapshot_id,
+        files_added: changes
+            .iter()
+            .filter(|change| change.kind == FileChangeKind::Added)
+            .count() as u64,
+        files_modified: changes
+            .iter()
+            .filter(|change| change.kind == FileChangeKind::Modified)
+            .count() as u64,
+        files_removed: changes
+            .iter()
+            .filter(|change| change.kind == FileChangeKind::Removed)
+            .count() as u64,
+        bytes_from: before.stats.logical_bytes,
+        bytes_to: after.stats.logical_bytes,
+        providers: provider_diffs.into_values().collect(),
+        changes,
+    })
+}
+
+fn empty_provider_diff(provider: Provider) -> ProviderDiff {
+    ProviderDiff {
+        provider,
+        files_added: 0,
+        files_modified: 0,
+        files_removed: 0,
+        bytes_from: 0,
+        bytes_to: 0,
+    }
 }
 
 fn archive_file(

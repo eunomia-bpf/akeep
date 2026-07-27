@@ -51,6 +51,9 @@ pub enum Command {
     /// Restore a version into an empty directory.
     Checkout(CheckoutArgs),
 
+    /// Compare two committed versions.
+    Diff(DiffArgs),
+
     /// Manage an optional automatic backup schedule.
     Schedule {
         #[command(subcommand)]
@@ -174,6 +177,24 @@ pub struct CheckoutArgs {
     /// Empty directory into which files will be recovered.
     #[arg(long, required = true, value_name = "DIRECTORY")]
     pub to: PathBuf,
+
+    /// Emit stable machine-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct DiffArgs {
+    /// Older commit; defaults to `HEAD~1`.
+    pub from: Option<String>,
+
+    /// Newer commit; defaults to `HEAD`.
+    #[arg(requires = "from")]
+    pub to: Option<String>,
+
+    /// Print only change kind and logical path.
+    #[arg(long, conflicts_with = "json")]
+    pub name_only: bool,
 
     /// Emit stable machine-readable output.
     #[arg(long)]
@@ -453,6 +474,48 @@ pub fn run(cli: Cli) -> Result<()> {
                 println!("Files: {}", report.files);
                 println!("Logical bytes: {}", report.logical_bytes);
                 println!("Duration: {} ms", report.duration_ms);
+            }
+        }
+        Command::Diff(args) => {
+            let active = config::Config::load(&config_path)?;
+            let (from, to) = match (args.from.as_deref(), args.to.as_deref()) {
+                (None, None) => ("HEAD~1", "HEAD"),
+                (Some(from), None) => (from, "HEAD"),
+                (Some(from), Some(to)) => (from, to),
+                (None, Some(_)) => unreachable!("clap requires FROM when TO is present"),
+            };
+            let report = archive::diff(&active, from, to)?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else if args.name_only {
+                for change in report.changes {
+                    println!("{}  {}", change.kind, change.logical_path);
+                }
+            } else {
+                println!("Diff {}..{}", report.from, report.to);
+                println!(
+                    "Files: +{} ~{} -{}",
+                    report.files_added, report.files_modified, report.files_removed
+                );
+                println!(
+                    "Logical bytes: {} -> {}",
+                    report.bytes_from, report.bytes_to
+                );
+                if report.changes.is_empty() {
+                    println!("No changes.");
+                } else {
+                    for provider in report.providers {
+                        println!(
+                            "{}: +{} ~{} -{}, {} -> {} bytes",
+                            provider.provider,
+                            provider.files_added,
+                            provider.files_modified,
+                            provider.files_removed,
+                            provider.bytes_from,
+                            provider.bytes_to
+                        );
+                    }
+                }
             }
         }
         Command::Schedule { command } => {

@@ -279,7 +279,7 @@ impl Vault {
     }
 
     pub fn load_manifest_by_id(&self, snapshot_id: &str) -> Result<Manifest> {
-        let key = self.manifest_key(&snapshot_id)?;
+        let key = self.manifest_key(snapshot_id)?;
         let encoded = self.storage.get(&key)?;
         let plaintext = self.codec.decrypt(&encoded)?;
         serde_json::from_slice(&plaintext)

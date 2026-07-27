@@ -583,6 +583,97 @@ fn commit_history_supports_messages_head_ancestors_and_clean_commands() {
     }
 }
 
+#[test]
+fn diff_reports_added_modified_and_removed_history_files() {
+    let fixture = Fixture::new();
+    let project = fixture.claude.join("projects/demo");
+    let changed = project.join("changed.jsonl");
+    let removed = project.join("removed.jsonl");
+    let added = project.join("added.jsonl");
+    fs::write(&changed, b"before").unwrap();
+    fs::write(&removed, b"removed").unwrap();
+    fixture.backup();
+
+    fs::write(&changed, b"after, with more context").unwrap();
+    fs::remove_file(&removed).unwrap();
+    fs::write(&added, b"new").unwrap();
+    fixture.backup();
+
+    let output = Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "diff",
+            "HEAD~1",
+            "HEAD",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: akeep::archive::DiffReport = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report.files_added, 1);
+    assert_eq!(report.files_modified, 1);
+    assert_eq!(report.files_removed, 1);
+    assert_eq!(
+        report
+            .changes
+            .iter()
+            .map(|change| (
+                change.kind,
+                change.logical_path.as_str(),
+                change.old_size,
+                change.new_size
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                akeep::archive::FileChangeKind::Added,
+                "claude-code/projects/demo/added.jsonl",
+                None,
+                Some(3)
+            ),
+            (
+                akeep::archive::FileChangeKind::Modified,
+                "claude-code/projects/demo/changed.jsonl",
+                Some(6),
+                Some(24)
+            ),
+            (
+                akeep::archive::FileChangeKind::Removed,
+                "claude-code/projects/demo/removed.jsonl",
+                Some(7),
+                None
+            ),
+        ]
+    );
+
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "diff",
+            "--name-only",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "A  claude-code/projects/demo/added.jsonl",
+        ))
+        .stdout(predicate::str::contains(
+            "M  claude-code/projects/demo/changed.jsonl",
+        ))
+        .stdout(predicate::str::contains(
+            "D  claude-code/projects/demo/removed.jsonl",
+        ));
+}
+
 struct Fixture {
     temp: TempDir,
     config: PathBuf,
