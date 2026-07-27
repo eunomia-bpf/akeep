@@ -39,6 +39,17 @@ The suite covers:
 The fake S3 CLI exercises the same process boundary and object contract as the
 real backend while keeping CI offline and deterministic.
 
+For a short end-to-end demonstration:
+
+```console
+cargo build
+AKEEP_BIN=target/debug/akeep ./scripts/demo.sh
+```
+
+The script creates only synthetic data in a mode-0700 temporary directory,
+compares every recovered fixture byte, deliberately corrupts a temporary
+archive object, and requires `verify` to reject it.
+
 ## Manual recovery drill
 
 For an ordinary machine:

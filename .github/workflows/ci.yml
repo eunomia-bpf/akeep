@@ -28,6 +28,8 @@ jobs:
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - name: Tests
         run: cargo test --all-targets --locked
+      - name: Synthetic trust demo
+        run: AKEEP_BIN=target/debug/akeep ./scripts/demo.sh
       - name: Package
         run: cargo package --locked
 

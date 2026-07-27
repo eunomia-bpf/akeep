@@ -80,6 +80,17 @@ vault under `~/.local/share/akeep/vaults/default`. Review `akeep doctor` before
 the first backup. Akeep skips known credential, cache, and temporary paths and
 never follows symlinks.
 
+Run the self-contained trust demo with synthetic five-provider fixtures:
+
+```console
+cargo build
+AKEEP_BIN=target/debug/akeep ./scripts/demo.sh
+```
+
+It proves a byte-identical recovery, then corrupts its temporary archive and
+proves that full verification rejects it. The demo uses a private temporary
+directory and removes it on exit.
+
 Encryption remains optional. To create an age-encrypted vault:
 
 ```console
