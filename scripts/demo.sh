@@ -83,9 +83,12 @@ run_akeep clone "$AKEEP_DEMO_CLONE"
 "$AKEEP_DEMO_BIN" --config "$AKEEP_DEMO_CLONE/config.toml" fsck HEAD
 printf '%s\n' 'PASS: cloned repository has a readable, complete HEAD'
 
-AKEEP_DEMO_OBJECT=$(find "$AKEEP_DEMO_VAULT/objects" -type f -print -quit)
-test -n "$AKEEP_DEMO_OBJECT"
-printf '%s' 'deliberately corrupt' > "$AKEEP_DEMO_OBJECT"
+AKEEP_DEMO_OBJECTS=0
+while IFS= read -r -d '' object; do
+    printf '%s' 'deliberately corrupt' > "$object"
+    AKEEP_DEMO_OBJECTS=$((AKEEP_DEMO_OBJECTS + 1))
+done < <(find "$AKEEP_DEMO_VAULT/objects" -type f -print0)
+test "$AKEEP_DEMO_OBJECTS" -gt 0
 if run_akeep fsck HEAD >/dev/null 2>&1; then
     printf '%s\n' 'FAIL: corrupted archive passed fsck' >&2
     exit 1

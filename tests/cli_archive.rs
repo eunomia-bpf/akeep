@@ -734,20 +734,24 @@ fn clone_creates_a_self_contained_repository_bundle() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report: akeep::archive::CloneReport = serde_json::from_slice(&output.stdout).unwrap();
+    let canonical_destination = fs::canonicalize(&destination).unwrap();
     assert_eq!(report.head, commit.snapshot_id);
     assert!(report.repository_objects >= 3);
     assert!(report.stored_bytes > 0);
-    assert_eq!(report.config, destination.join("config.toml"));
+    assert_eq!(report.config, canonical_destination.join("config.toml"));
     assert!(!destination.join(".akeep-clone-incomplete").exists());
 
     let clone_config = akeep::config::Config::load(&report.config).unwrap();
     assert_eq!(
         clone_config.target,
         akeep::config::TargetConfig::Filesystem {
-            path: destination.join("repository")
+            path: canonical_destination.join("repository")
         }
     );
-    assert_eq!(clone_config.vault.state_path, destination.join("state"));
+    assert_eq!(
+        clone_config.vault.state_path,
+        canonical_destination.join("state")
+    );
 
     Command::cargo_bin("akeep")
         .unwrap()
