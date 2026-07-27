@@ -9,8 +9,8 @@ synthetic fixtures and never contains private sessions.
 
 | Provider | Recovery root | Included durable state | Consistency handling |
 | --- | --- | --- | --- |
-| Claude Code | `claude-code/` | `projects`, `sessions`, `file-history`, `plans`, `commands`, `tasks`, `todos`, `shell-snapshots`, `session-env`, `backups`, `history.jsonl` | Immutable/append-only files are read without following symlinks |
-| Codex CLI | `codex/` | `sessions`, `attachments`, `memories`, `shell_snapshots`, `automations`, `history.jsonl`, `session_index.jsonl`, state/log/goals/memories databases | SQLite backup API plus `integrity_check` |
+| Claude Code | `claude-code/` | `projects`, `sessions`, `file-history`, `plans`, `commands`, `tasks`, `todos`, `shell-snapshots`, `session-env`, `backups`, `history.jsonl` | Rotating shell/task state is staged early; symlinks are not followed |
+| Codex CLI | `codex/` | `sessions`, `attachments`, `memories`, `shell_snapshots`, `automations`, `history.jsonl`, `session_index.jsonl`, state/log/goals/memories databases | Rotating shell/automation state is staged early; SQLite uses the backup API plus `integrity_check` |
 | Grok CLI | `grok/` | `sessions`, `active_sessions.json`, `worktrees.db` | SQLite backup API for `worktrees.db` |
 | Kimi Code | `kimi-code/` | `sessions`, `user-history`, `session_index.jsonl`, `workspaces.json` | Immutable/append-only files are read without following symlinks |
 | OpenCode | `opencode/` | `opencode.db`, `storage`, `prompt-history.jsonl` | SQLite backup API for `opencode.db` |

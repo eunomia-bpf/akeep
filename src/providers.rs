@@ -64,6 +64,7 @@ impl fmt::Display for Provider {
 #[serde(rename_all = "kebab-case")]
 pub enum SourceKind {
     Directory,
+    SnapshotDirectory,
     File,
     Sqlite,
 }
@@ -168,19 +169,22 @@ fn item(
 fn claude_spec(root: PathBuf) -> ProviderSpec {
     let provider = Provider::ClaudeCode;
     let mut items = Vec::new();
+    for relative in ["projects", "sessions", "file-history", "plans", "commands"] {
+        items.push(item(provider, &root, relative, SourceKind::Directory));
+    }
     for relative in [
-        "projects",
-        "sessions",
-        "file-history",
-        "plans",
-        "commands",
         "tasks",
         "todos",
         "shell-snapshots",
         "session-env",
         "backups",
     ] {
-        items.push(item(provider, &root, relative, SourceKind::Directory));
+        items.push(item(
+            provider,
+            &root,
+            relative,
+            SourceKind::SnapshotDirectory,
+        ));
     }
     items.push(item(provider, &root, "history.jsonl", SourceKind::File));
 
@@ -213,14 +217,14 @@ fn claude_spec(root: PathBuf) -> ProviderSpec {
 fn codex_spec(root: PathBuf) -> ProviderSpec {
     let provider = Provider::Codex;
     let mut items = Vec::new();
-    for relative in [
-        "sessions",
-        "attachments",
-        "memories",
-        "shell_snapshots",
-        "automations",
-    ] {
-        items.push(item(provider, &root, relative, SourceKind::Directory));
+    items.push(item(provider, &root, "sessions", SourceKind::Directory));
+    for relative in ["attachments", "memories", "shell_snapshots", "automations"] {
+        items.push(item(
+            provider,
+            &root,
+            relative,
+            SourceKind::SnapshotDirectory,
+        ));
     }
     for relative in ["history.jsonl", "session_index.jsonl"] {
         items.push(item(provider, &root, relative, SourceKind::File));

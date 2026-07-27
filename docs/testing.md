@@ -23,6 +23,7 @@ The suite covers:
 - five-provider discovery and known credential/cache exclusions;
 - live SQLite backup during concurrent WAL writes and recovered
   `PRAGMA integrity_check`;
+- early staging of rotating provider files that disappear before archival;
 - local, plaintext S3-compatible, and age-encrypted round trips;
 - content deduplication within a chunk batch, across parallel files, and across
   recovery points;

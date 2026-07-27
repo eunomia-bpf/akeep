@@ -52,14 +52,19 @@ fn prepare_item(item: &SourceItem, staging: &Path, files: &mut Vec<PreparedFile>
     }
 
     match item.kind {
-        SourceKind::Directory => {
+        SourceKind::Directory | SourceKind::SnapshotDirectory => {
             if !metadata.is_dir() {
                 bail!(
                     "expected directory source at {}",
                     item.source_path.display()
                 );
             }
-            prepare_directory(item, files)
+            prepare_directory(
+                item,
+                staging,
+                item.kind == SourceKind::SnapshotDirectory,
+                files,
+            )
         }
         SourceKind::File => {
             if !metadata.is_file() {
@@ -92,7 +97,12 @@ fn prepare_item(item: &SourceItem, staging: &Path, files: &mut Vec<PreparedFile>
     }
 }
 
-fn prepare_directory(item: &SourceItem, files: &mut Vec<PreparedFile>) -> Result<()> {
+fn prepare_directory(
+    item: &SourceItem,
+    staging: &Path,
+    snapshot_files: bool,
+    files: &mut Vec<PreparedFile>,
+) -> Result<()> {
     for entry in WalkDir::new(&item.source_path)
         .follow_links(false)
         .sort_by_file_name()
@@ -123,15 +133,41 @@ fn prepare_directory(item: &SourceItem, files: &mut Vec<PreparedFile>) -> Result
         let metadata = entry
             .metadata()
             .with_context(|| format!("failed to inspect {}", entry.path().display()))?;
+        let read_path = if snapshot_files {
+            snapshot_regular_file(entry.path(), staging)?
+        } else {
+            entry.path().to_path_buf()
+        };
         files.push(prepared_regular(
             item.provider,
-            entry.path().to_path_buf(),
+            read_path,
             logical_path,
             &metadata,
             ArchivedFileKind::Regular,
         )?);
     }
     Ok(())
+}
+
+fn snapshot_regular_file(source: &Path, staging: &Path) -> Result<PathBuf> {
+    let destination = staging.join(format!("{}.file", uuid::Uuid::new_v4()));
+    fs::copy(source, &destination).with_context(|| {
+        format!(
+            "failed to snapshot volatile source {} into {}",
+            source.display(),
+            destination.display()
+        )
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&destination, fs::Permissions::from_mode(0o600))?;
+    }
+    File::open(&destination)
+        .with_context(|| format!("failed to open volatile snapshot {}", destination.display()))?
+        .sync_all()
+        .with_context(|| format!("failed to sync volatile snapshot {}", destination.display()))?;
+    Ok(destination)
 }
 
 fn prepared_regular(
@@ -405,6 +441,35 @@ mod tests {
         assert_eq!(
             files[0].logical_path,
             "claude-code/projects/demo/session.jsonl"
+        );
+    }
+
+    #[test]
+    fn snapshots_rotating_shell_state_before_archival() {
+        let temp = TempDir::new().unwrap();
+        let codex = temp.path().join("codex");
+        let staging = temp.path().join("staging");
+        let source = codex.join("shell_snapshots/session.sh");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::create_dir_all(&staging).unwrap();
+        fs::write(&source, b"stable shell state").unwrap();
+
+        let mut config = sample_config(temp.path().join("vault"));
+        config.sources.claude_home = Some(temp.path().join("missing-claude"));
+        config.sources.codex_home = Some(codex);
+        config.sources.grok_home = Some(temp.path().join("missing-grok"));
+        config.sources.kimi_home = Some(temp.path().join("missing-kimi"));
+        config.sources.opencode_share = Some(temp.path().join("missing-opencode-share"));
+        config.sources.opencode_state = Some(temp.path().join("missing-opencode-state"));
+
+        let files = prepare_files(&config, &staging).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].logical_path, "codex/shell_snapshots/session.sh");
+        assert_ne!(files[0].read_path, source);
+        fs::remove_file(source).unwrap();
+        assert_eq!(
+            fs::read(&files[0].read_path).unwrap(),
+            b"stable shell state"
         );
     }
 

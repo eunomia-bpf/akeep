@@ -27,5 +27,7 @@ the first release is tagged.
   reconstruction and hash checks for multi-chunk files.
 - Native `CLAUDE_CONFIG_DIR` discovery with a backwards-compatible
   `CLAUDE_HOME` alias.
+- Early private staging for rotating shell/task state, preventing an active
+  provider from deleting a discovered file during a long first backup.
 
 [Unreleased]: https://github.com/eunomia-bpf/akeep/commits/main
