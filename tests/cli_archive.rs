@@ -103,6 +103,92 @@ fn backup_verify_list_and_recover_round_trip() {
 }
 
 #[test]
+fn recover_can_select_one_provider_without_marking_full_verification() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.claude.join("projects/demo/session.jsonl"),
+        b"claude history",
+    )
+    .unwrap();
+    let codex = fixture.temp.path().join("codex");
+    fs::create_dir_all(codex.join("sessions")).unwrap();
+    fs::write(codex.join("sessions/session.jsonl"), b"codex history").unwrap();
+
+    let mut config = akeep::config::Config::load(&fixture.config).unwrap();
+    config.sources.codex_home = Some(codex);
+    fs::write(&fixture.config, toml::to_string_pretty(&config).unwrap()).unwrap();
+    fixture.backup();
+
+    let recovery = fixture.temp.path().join("provider-recovery");
+    let output = Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "recover",
+            "latest",
+            "--provider",
+            "claude-code",
+            "--to",
+            recovery.to_str().unwrap(),
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: akeep::archive::RecoveryReport = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        report.provider,
+        Some(akeep::providers::Provider::ClaudeCode)
+    );
+    assert_eq!(report.files, 1);
+    assert_eq!(report.logical_bytes, 14);
+    assert!(
+        recovery
+            .join("claude-code/projects/demo/session.jsonl")
+            .is_file()
+    );
+    assert!(!recovery.join("codex").exists());
+    assert_eq!(
+        snapshot_list(&fixture)[0].verification,
+        akeep::archive::VerificationLevel::Quick
+    );
+}
+
+#[test]
+fn recover_rejects_a_provider_absent_from_the_snapshot_before_creating_target() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.claude.join("projects/demo/session.jsonl"),
+        b"claude history",
+    )
+    .unwrap();
+    fixture.backup();
+    let recovery = fixture.temp.path().join("provider-recovery");
+
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "recover",
+            "latest",
+            "--provider",
+            "codex",
+            "--to",
+            recovery.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("contains no codex files"));
+    assert!(!recovery.exists());
+}
+
+#[test]
 fn full_verify_detects_corruption() {
     let fixture = Fixture::new();
     fs::write(

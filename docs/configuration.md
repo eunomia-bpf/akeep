@@ -112,10 +112,13 @@ Successful upload is not proof of recovery. Regularly run:
 akeep snapshots
 akeep verify latest
 akeep recover latest --to /tmp/akeep-drill
+# Smaller provider-native drill when scratch space is limited:
+akeep recover latest --provider claude-code --to /tmp/akeep-claude-drill
 ```
 
 `verify` performs a full download/decrypt/decompress/hash pass by default.
 `verify --quick` checks manifest structure, object presence, and stored sizes.
 Recovery accepts only a new or empty real directory, never follows a target
 symlink, writes an incomplete marker until all files pass hashes, and never
-modifies live provider directories.
+modifies live provider directories. A provider-filtered recovery validates all
+selected bytes but does not mark the whole recovery point as fully verified.

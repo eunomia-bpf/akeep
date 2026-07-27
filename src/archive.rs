@@ -79,6 +79,7 @@ pub struct VerifyReport {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RecoveryReport {
     pub snapshot_id: String,
+    pub provider: Option<Provider>,
     pub target: PathBuf,
     pub files: u64,
     pub logical_bytes: u64,
@@ -247,28 +248,57 @@ pub fn verify(config: &Config, reference: &str, full: bool) -> Result<VerifyRepo
     })
 }
 
-pub fn recover(config: &Config, reference: &str, target: &Path) -> Result<RecoveryReport> {
+pub fn recover(
+    config: &Config,
+    reference: &str,
+    target: &Path,
+    provider: Option<Provider>,
+) -> Result<RecoveryReport> {
     let started = Instant::now();
     let vault = Vault::open(config)?;
     let manifest = vault.load_manifest(reference)?;
     manifest.validate(config.vault.id)?;
+    let selected: Vec<_> = manifest
+        .files
+        .iter()
+        .filter(|record| provider.is_none_or(|provider| record.provider == provider))
+        .collect();
+    if selected.is_empty() {
+        if let Some(provider) = provider {
+            bail!(
+                "recovery point {} contains no {} files",
+                manifest.snapshot_id,
+                provider
+            );
+        }
+        bail!("recovery point {} contains no files", manifest.snapshot_id);
+    }
+    let files = u64::try_from(selected.len()).context("selected file count exceeds u64")?;
+    let logical_bytes = selected.iter().try_fold(0_u64, |total, record| {
+        total
+            .checked_add(record.size)
+            .context("selected logical bytes exceed u64")
+    })?;
     prepare_recovery_target(vault.filesystem_root(), vault.state_root(), target)?;
 
     let marker = target.join(".akeep-recovery-incomplete");
     create_private_new_file(&marker)?;
-    let recovery_result = recover_files(&vault, &manifest, target);
+    let recovery_result = recover_files(&vault, selected, target);
     if recovery_result.is_ok() {
         fs::remove_file(&marker)
             .with_context(|| format!("failed to remove recovery marker {}", marker.display()))?;
     }
     recovery_result?;
-    vault.record_full_verification(&manifest.snapshot_id)?;
+    if provider.is_none() {
+        vault.record_full_verification(&manifest.snapshot_id)?;
+    }
 
     Ok(RecoveryReport {
         snapshot_id: manifest.snapshot_id,
+        provider,
         target: fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf()),
-        files: manifest.stats.files,
-        logical_bytes: manifest.stats.logical_bytes,
+        files,
+        logical_bytes,
         duration_ms: elapsed_millis(started),
     })
 }
@@ -528,8 +558,12 @@ fn resolve_future_path(path: &Path) -> Result<PathBuf> {
     Ok(resolved)
 }
 
-fn recover_files(vault: &Vault, manifest: &Manifest, target: &Path) -> Result<()> {
-    for record in &manifest.files {
+fn recover_files<'a>(
+    vault: &Vault,
+    records: impl IntoIterator<Item = &'a FileRecord>,
+    target: &Path,
+) -> Result<()> {
+    for record in records {
         validate_logical_path(&record.logical_path)?;
         let output = target.join(&record.logical_path);
         let parent = output

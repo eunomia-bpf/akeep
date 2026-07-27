@@ -67,6 +67,7 @@ akeep backup
 akeep snapshots
 akeep verify latest
 akeep recover latest --to /tmp/akeep-recovery
+akeep recover latest --provider claude-code --to /tmp/akeep-claude-drill
 akeep index rebuild
 akeep search "database migration"
 akeep export latest --format markdown --to recovery-point.md

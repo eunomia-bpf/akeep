@@ -10,6 +10,8 @@ akeep doctor
 akeep snapshots
 akeep verify latest
 akeep recover latest --to /tmp/akeep-drill
+# Smaller provider-native drill:
+akeep recover latest --provider claude-code --to /tmp/akeep-claude-drill
 ```
 
 Compare recovered file BLAKE3 hashes with the JSON export or manifest. Open

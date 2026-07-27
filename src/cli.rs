@@ -156,6 +156,10 @@ pub struct RecoverArgs {
     #[arg(default_value = "latest")]
     pub snapshot: String,
 
+    /// Recover only one provider (for a smaller, provider-native drill).
+    #[arg(long, value_enum)]
+    pub provider: Option<Provider>,
+
     /// Empty directory into which files will be recovered.
     #[arg(long, required = true, value_name = "DIRECTORY")]
     pub to: PathBuf,
@@ -424,11 +428,14 @@ pub fn run(cli: Cli) -> Result<()> {
         }
         Command::Recover(args) => {
             let active = config::Config::load(&config_path)?;
-            let report = archive::recover(&active, &args.snapshot, &args.to)?;
+            let report = archive::recover(&active, &args.snapshot, &args.to, args.provider)?;
             if args.json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
                 println!("Recovered {}", report.snapshot_id);
+                if let Some(provider) = report.provider {
+                    println!("Provider: {provider}");
+                }
                 println!("Target: {}", report.target.display());
                 println!("Files: {}", report.files);
                 println!("Logical bytes: {}", report.logical_bytes);
