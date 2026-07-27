@@ -144,7 +144,7 @@ fn render_service(unit_name: &str, executable: &Path, config_path: &Path) -> Res
          IOSchedulingPriority=7\n\
          NoNewPrivileges=true\n\
          PrivateTmp=true\n",
-        systemd_quote(config_path)?,
+        systemd_unit_path(config_path)?,
         systemd_quote(executable)?,
         systemd_quote(config_path)?,
     ))
@@ -191,6 +191,27 @@ fn systemd_quote(path: &Path) -> Result<String> {
     }
     quoted.push('"');
     Ok(quoted)
+}
+
+fn systemd_unit_path(path: &Path) -> Result<String> {
+    let bytes = path.as_os_str().as_encoded_bytes();
+    if bytes.first() != Some(&b'/') {
+        bail!(
+            "systemd condition path must be absolute: {}",
+            path.display()
+        );
+    }
+    let mut escaped = String::new();
+    for byte in bytes {
+        match byte {
+            b'%' => escaped.push_str("%%"),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'_' | b'-' | b'.' | b'+' | b':' => {
+                escaped.push(char::from(*byte))
+            }
+            byte => escaped.push_str(&format!("\\x{byte:02x}")),
+        }
+    }
+    Ok(escaped)
 }
 
 fn unit_paths(vault_id: Uuid, unit_dir: &Path) -> (String, PathBuf, PathBuf) {
@@ -333,6 +354,10 @@ mod tests {
 
         assert!(service.contains("ExecStart=\"/opt/Akeep $$HOME/%%i/akeep\""));
         assert!(service.contains("Akeep \\\"primary\\\""));
+        assert!(
+            service
+                .contains("ConditionPathExists=/home/user/Akeep\\x20\\x22primary\\x22/config.toml")
+        );
         assert!(service.contains("IOSchedulingClass=idle"));
         assert!(timer.contains("OnCalendar=weekly"));
         assert!(timer.contains("Persistent=true"));
