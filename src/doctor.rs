@@ -338,7 +338,29 @@ fn inventory_directory(item: &SourceItem) -> ItemInventory {
 }
 
 fn paths_overlap(left: &Path, right: &Path) -> bool {
-    left.starts_with(right) || right.starts_with(left)
+    let left = resolve_for_overlap(left);
+    let right = resolve_for_overlap(right);
+    left.starts_with(&right) || right.starts_with(&left)
+}
+
+fn resolve_for_overlap(path: &Path) -> PathBuf {
+    if let Ok(resolved) = fs::canonicalize(path) {
+        return resolved;
+    }
+
+    let mut missing = Vec::new();
+    let mut ancestor = path;
+    while let (Some(name), Some(parent)) = (ancestor.file_name(), ancestor.parent()) {
+        missing.push(name.to_os_string());
+        ancestor = parent;
+        if let Ok(mut resolved) = fs::canonicalize(ancestor) {
+            for component in missing.iter().rev() {
+                resolved.push(component);
+            }
+            return resolved;
+        }
+    }
+    path.to_path_buf()
 }
 
 fn human_bytes(bytes: u64) -> String {
@@ -417,6 +439,27 @@ mod tests {
                 .iter()
                 .any(|error| error.contains("overlaps provider root"))
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn overlap_check_resolves_symlinked_parent_aliases() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let real = temp.path().join("real");
+        let alias = temp.path().join("alias");
+        fs::create_dir_all(real.join("provider/vault")).unwrap();
+        symlink(&real, &alias).unwrap();
+
+        assert!(paths_overlap(
+            &real.join("provider/vault"),
+            &alias.join("provider")
+        ));
+        assert!(paths_overlap(
+            &real.join("provider/future-vault"),
+            &alias.join("provider")
+        ));
     }
 
     fn sample_config(target: PathBuf) -> Config {
