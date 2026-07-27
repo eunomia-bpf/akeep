@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
@@ -27,6 +28,7 @@ pub struct BackupReport {
     pub unique_objects: u64,
     pub new_objects: u64,
     pub new_stored_bytes: u64,
+    pub duration_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -35,9 +37,30 @@ pub struct SnapshotInfo {
     pub created_at: chrono::DateTime<Utc>,
     pub hostname: String,
     pub files: u64,
+    pub providers: Vec<Provider>,
     pub logical_bytes: u64,
+    pub unique_raw_bytes: u64,
+    pub duplicate_raw_bytes: u64,
     pub unique_objects: u64,
     pub stored_bytes: u64,
+    pub verification: VerificationLevel,
+    pub full_verified_at: Option<chrono::DateTime<Utc>>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum VerificationLevel {
+    Quick,
+    Full,
+}
+
+impl std::fmt::Display for VerificationLevel {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Quick => formatter.write_str("quick"),
+            Self::Full => formatter.write_str("full"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -47,6 +70,7 @@ pub struct VerifyReport {
     pub files: u64,
     pub logical_bytes: u64,
     pub unique_objects: u64,
+    pub duration_ms: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -55,9 +79,11 @@ pub struct RecoveryReport {
     pub target: PathBuf,
     pub files: u64,
     pub logical_bytes: u64,
+    pub duration_ms: u64,
 }
 
 pub fn backup(config_path: &Path, config: &Config) -> Result<BackupReport> {
+    let started = Instant::now();
     let diagnosis = doctor::inspect(config_path, config);
     if !diagnosis.healthy {
         bail!("backup preflight failed: {}", diagnosis.errors.join("; "));
@@ -124,6 +150,9 @@ pub fn backup(config_path: &Path, config: &Config) -> Result<BackupReport> {
         stats: stats.clone(),
     };
     manifest.validate(config.vault.id)?;
+    if !new_objects.is_empty() {
+        vault.refresh_object_metadata()?;
+    }
     verify_object_presence(&vault, &manifest)?;
     vault.publish_manifest(&manifest)?;
 
@@ -135,6 +164,7 @@ pub fn backup(config_path: &Path, config: &Config) -> Result<BackupReport> {
         unique_objects: stats.unique_objects,
         new_objects: stats.new_objects,
         new_stored_bytes: stats.new_stored_bytes,
+        duration_ms: elapsed_millis(started),
     })
 }
 
@@ -145,21 +175,44 @@ pub fn snapshots(config: &Config) -> Result<Vec<SnapshotInfo>> {
     for manifest in manifests {
         manifest.validate(config.vault.id)?;
         let mut seen = HashSet::new();
-        let stored_bytes = manifest
-            .files
-            .iter()
-            .flat_map(|file| &file.chunks)
-            .filter(|chunk| seen.insert(chunk.id.as_str()))
-            .map(|chunk| chunk.stored_size)
-            .sum();
+        let mut stored_bytes = 0_u64;
+        let mut unique_raw_bytes = 0_u64;
+        for chunk in manifest.files.iter().flat_map(|file| &file.chunks) {
+            if seen.insert(chunk.id.as_str()) {
+                stored_bytes = stored_bytes
+                    .checked_add(chunk.stored_size)
+                    .context("snapshot stored byte count overflow")?;
+                unique_raw_bytes = unique_raw_bytes
+                    .checked_add(chunk.raw_size)
+                    .context("snapshot raw byte count overflow")?;
+            }
+        }
+        let full_verified_at = vault.full_verification_time(&manifest.snapshot_id)?;
         snapshots.push(SnapshotInfo {
             snapshot_id: manifest.snapshot_id,
             created_at: manifest.created_at,
             hostname: manifest.hostname,
             files: manifest.stats.files,
+            providers: manifest
+                .providers
+                .iter()
+                .map(|summary| summary.provider)
+                .collect(),
             logical_bytes: manifest.stats.logical_bytes,
+            unique_raw_bytes,
+            duplicate_raw_bytes: manifest
+                .stats
+                .logical_bytes
+                .checked_sub(unique_raw_bytes)
+                .context("snapshot unique bytes exceed logical bytes")?,
             unique_objects: manifest.stats.unique_objects,
             stored_bytes,
+            verification: if full_verified_at.is_some() {
+                VerificationLevel::Full
+            } else {
+                VerificationLevel::Quick
+            },
+            full_verified_at,
         });
     }
     snapshots.sort_by(|left, right| right.created_at.cmp(&left.created_at));
@@ -167,6 +220,7 @@ pub fn snapshots(config: &Config) -> Result<Vec<SnapshotInfo>> {
 }
 
 pub fn verify(config: &Config, reference: &str, full: bool) -> Result<VerifyReport> {
+    let started = Instant::now();
     let vault = Vault::open(config)?;
     let manifest = vault.load_manifest(reference)?;
     manifest.validate(config.vault.id)?;
@@ -175,6 +229,7 @@ pub fn verify(config: &Config, reference: &str, full: bool) -> Result<VerifyRepo
         for file in &manifest.files {
             verify_file(&vault, file)?;
         }
+        vault.record_full_verification(&manifest.snapshot_id)?;
     } else {
         verify_object_presence(&vault, &manifest)?;
     }
@@ -185,10 +240,12 @@ pub fn verify(config: &Config, reference: &str, full: bool) -> Result<VerifyRepo
         files: manifest.stats.files,
         logical_bytes: manifest.stats.logical_bytes,
         unique_objects: manifest.stats.unique_objects,
+        duration_ms: elapsed_millis(started),
     })
 }
 
 pub fn recover(config: &Config, reference: &str, target: &Path) -> Result<RecoveryReport> {
+    let started = Instant::now();
     let vault = Vault::open(config)?;
     let manifest = vault.load_manifest(reference)?;
     manifest.validate(config.vault.id)?;
@@ -202,12 +259,14 @@ pub fn recover(config: &Config, reference: &str, target: &Path) -> Result<Recove
             .with_context(|| format!("failed to remove recovery marker {}", marker.display()))?;
     }
     recovery_result?;
+    vault.record_full_verification(&manifest.snapshot_id)?;
 
     Ok(RecoveryReport {
         snapshot_id: manifest.snapshot_id,
         target: fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf()),
         files: manifest.stats.files,
         logical_bytes: manifest.stats.logical_bytes,
+        duration_ms: elapsed_millis(started),
     })
 }
 
@@ -290,6 +349,7 @@ fn summarize_providers(files: &[FileRecord]) -> Vec<ProviderSummary> {
         .into_iter()
         .map(|(provider, (files, logical_bytes))| ProviderSummary {
             provider,
+            adapter_version: Provider::ADAPTER_VERSION,
             files,
             logical_bytes,
         })
@@ -485,6 +545,10 @@ fn apply_metadata(path: &Path, record: &FileRecord) -> Result<()> {
 
 fn paths_overlap(left: &Path, right: &Path) -> bool {
     left.starts_with(right) || right.starts_with(left)
+}
+
+fn elapsed_millis(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]

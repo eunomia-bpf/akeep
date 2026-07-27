@@ -31,6 +31,13 @@ fn backup_verify_list_and_recover_round_trip() {
     assert!(first.new_objects > 0);
     assert!(first.unique_objects < first.chunk_references);
 
+    let snapshots = snapshot_list(&fixture);
+    assert_eq!(
+        snapshots[0].verification,
+        akeep::archive::VerificationLevel::Quick
+    );
+    assert!(snapshots[0].full_verified_at.is_none());
+
     Command::cargo_bin("akeep")
         .unwrap()
         .args([
@@ -42,6 +49,12 @@ fn backup_verify_list_and_recover_round_trip() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Verified recovery point"));
+    let snapshots = snapshot_list(&fixture);
+    assert_eq!(
+        snapshots[0].verification,
+        akeep::archive::VerificationLevel::Full
+    );
+    assert!(snapshots[0].full_verified_at.is_some());
 
     Command::cargo_bin("akeep")
         .unwrap()
@@ -118,6 +131,79 @@ fn full_verify_detects_corruption() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("decompress"));
+}
+
+#[test]
+fn failed_recovery_keeps_an_incomplete_marker() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.claude.join("projects/demo/session.jsonl"),
+        b"abcdefghijkl",
+    )
+    .unwrap();
+    let backup = fixture.backup();
+    let manifest = load_manifest(&fixture.vault, &backup.snapshot_id);
+    let object = &manifest.files[0].chunks[1].id;
+    let object_path = fixture
+        .vault
+        .join("objects")
+        .join(&object[..2])
+        .join(format!("{}.zst", &object[2..]));
+    fs::write(object_path, b"corrupt").unwrap();
+    let recovery = fixture.temp.path().join("recovery");
+
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "recover",
+            "latest",
+            "--to",
+            recovery.to_str().unwrap(),
+        ])
+        .assert()
+        .failure();
+
+    assert!(recovery.join(".akeep-recovery-incomplete").is_file());
+    assert!(
+        recovery
+            .join("claude-code/projects/demo/session.jsonl")
+            .is_file()
+    );
+}
+
+#[test]
+fn full_verify_detects_reordered_objects() {
+    let fixture = Fixture::new();
+    fs::write(
+        fixture.claude.join("projects/demo/session.jsonl"),
+        b"abcdefghijkl",
+    )
+    .unwrap();
+    let backup = fixture.backup();
+    let mut manifest = load_manifest(&fixture.vault, &backup.snapshot_id);
+    manifest.files[0].chunks.swap(0, 1);
+    fs::write(
+        fixture
+            .vault
+            .join("manifests")
+            .join(format!("{}.json", backup.snapshot_id)),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "verify",
+            "latest",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("file hash mismatch"));
 }
 
 #[test]
@@ -350,4 +436,23 @@ impl Fixture {
 fn load_manifest(vault: &Path, snapshot_id: &str) -> akeep::manifest::Manifest {
     let path = vault.join("manifests").join(format!("{snapshot_id}.json"));
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
+}
+
+fn snapshot_list(fixture: &Fixture) -> Vec<akeep::archive::SnapshotInfo> {
+    let output = Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            fixture.config.to_str().unwrap(),
+            "snapshots",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
 }

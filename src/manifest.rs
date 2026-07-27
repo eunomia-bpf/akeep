@@ -38,8 +38,14 @@ pub struct ArchiveDescriptor {
 #[serde(deny_unknown_fields)]
 pub struct ProviderSummary {
     pub provider: Provider,
+    #[serde(default = "default_adapter_version")]
+    pub adapter_version: u32,
     pub files: u64,
     pub logical_bytes: u64,
+}
+
+fn default_adapter_version() -> u32 {
+    Provider::ADAPTER_VERSION
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -122,6 +128,14 @@ impl Manifest {
         let mut chunk_references = 0_u64;
         for file in &self.files {
             validate_logical_path(&file.logical_path)?;
+            let provider_prefix = format!("{}/", file.provider.id());
+            if !file.logical_path.starts_with(&provider_prefix) {
+                bail!(
+                    "logical path {} does not match provider {}",
+                    file.logical_path,
+                    file.provider
+                );
+            }
             if !logical_paths.insert(&file.logical_path) {
                 bail!("duplicate logical path {}", file.logical_path);
             }
@@ -132,7 +146,20 @@ impl Manifest {
             if file.blake3.bytes().any(|byte| byte.is_ascii_uppercase()) {
                 bail!("file hash must be lowercase for {}", file.logical_path);
             }
-            let chunk_bytes: u64 = file.chunks.iter().map(|chunk| chunk.raw_size).sum();
+            if file
+                .modified_subsec_nanos
+                .is_some_and(|nanos| nanos >= 1_000_000_000)
+            {
+                bail!("invalid modification time for {}", file.logical_path);
+            }
+            if file.unix_mode.is_some_and(|mode| mode > 0o7777) {
+                bail!("invalid Unix mode for {}", file.logical_path);
+            }
+            let chunk_bytes = file.chunks.iter().try_fold(0_u64, |total, chunk| {
+                total
+                    .checked_add(chunk.raw_size)
+                    .ok_or_else(|| anyhow::anyhow!("chunk byte count overflow"))
+            })?;
             if chunk_bytes != file.size {
                 bail!(
                     "chunk sizes for {} total {}, expected {}",
@@ -146,6 +173,9 @@ impl Manifest {
                 if chunk.raw_size == 0 {
                     bail!("zero-length chunk {} in {}", chunk.id, file.logical_path);
                 }
+                if chunk.stored_size == 0 {
+                    bail!("zero stored size for chunk {}", chunk.id);
+                }
                 if chunk.raw_size > self.archive.chunk_size {
                     bail!(
                         "chunk {} exceeds configured chunk size {}",
@@ -154,13 +184,18 @@ impl Manifest {
                     );
                 }
                 unique_objects.insert(&chunk.id);
-                chunk_references += 1;
+                chunk_references = chunk_references
+                    .checked_add(1)
+                    .ok_or_else(|| anyhow::anyhow!("chunk reference count overflow"))?;
             }
             logical_bytes = logical_bytes
                 .checked_add(file.size)
                 .ok_or_else(|| anyhow::anyhow!("manifest logical byte count overflow"))?;
             let provider_total = provider_totals.entry(file.provider).or_default();
-            provider_total.0 += 1;
+            provider_total.0 = provider_total
+                .0
+                .checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("provider file count overflow"))?;
             provider_total.1 = provider_total
                 .1
                 .checked_add(file.size)
@@ -170,8 +205,13 @@ impl Manifest {
         let declared_providers: BTreeMap<_, _> = self
             .providers
             .iter()
-            .map(|summary| (summary.provider, (summary.files, summary.logical_bytes)))
-            .collect();
+            .map(|summary| {
+                if summary.adapter_version == 0 {
+                    bail!("provider adapter version must be greater than zero");
+                }
+                Ok((summary.provider, (summary.files, summary.logical_bytes)))
+            })
+            .collect::<Result<_>>()?;
         if declared_providers.len() != self.providers.len() {
             bail!("manifest contains duplicate provider summaries");
         }

@@ -375,6 +375,7 @@ pub fn run(cli: Cli) -> Result<()> {
                     "New objects: {} ({} stored bytes)",
                     report.new_objects, report.new_stored_bytes
                 );
+                println!("Duration: {} ms", report.duration_ms);
             }
         }
         Command::Snapshots(args) => {
@@ -386,13 +387,21 @@ pub fn run(cli: Cli) -> Result<()> {
                 println!("No recovery points.");
             } else {
                 for snapshot in snapshots {
+                    let providers = snapshot
+                        .providers
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",");
                     println!(
-                        "{}  {}  {} files  {} logical bytes  {} stored bytes",
+                        "{}  {}  [{}]  {} files  {} logical bytes  {} stored bytes  {}",
                         snapshot.snapshot_id,
                         snapshot.hostname,
+                        providers,
                         snapshot.files,
                         snapshot.logical_bytes,
-                        snapshot.stored_bytes
+                        snapshot.stored_bytes,
+                        snapshot.verification
                     );
                 }
             }
@@ -410,6 +419,7 @@ pub fn run(cli: Cli) -> Result<()> {
                     report.files,
                     report.logical_bytes
                 );
+                println!("Duration: {} ms", report.duration_ms);
             }
         }
         Command::Recover(args) => {
@@ -422,6 +432,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 println!("Target: {}", report.target.display());
                 println!("Files: {}", report.files);
                 println!("Logical bytes: {}", report.logical_bytes);
+                println!("Duration: {} ms", report.duration_ms);
             }
         }
         Command::Schedule { command } => {

@@ -1,10 +1,12 @@
-use std::fs::{File, OpenOptions};
-use std::io::Cursor;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Cursor, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
+use chrono::{DateTime, Utc};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+use tempfile::NamedTempFile;
 use uuid::Uuid;
 
 use crate::config::{Config, EncryptionMode, create_private_directory};
@@ -15,10 +17,12 @@ use crate::manifest::{
 use crate::storage::{ObjectMetadata, Storage};
 
 const VAULT_METADATA_VERSION: u32 = 1;
+const VERIFICATION_RECEIPT_VERSION: u32 = 1;
 
 pub struct Vault {
     storage: Storage,
     state_root: PathBuf,
+    vault_id: Uuid,
     codec: CryptoContext,
 }
 
@@ -41,11 +45,22 @@ struct VaultMetadata {
     encryption: EncryptionMode,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct VerificationReceipt {
+    format_version: u32,
+    vault_id: Uuid,
+    snapshot_id: String,
+    verified_at: DateTime<Utc>,
+    level: String,
+}
+
 impl Vault {
     pub fn open(config: &Config) -> Result<Self> {
         let vault = Self {
             storage: Storage::from_config(&config.target)?,
             state_root: config.vault.state_path.clone(),
+            vault_id: config.vault.id,
             codec: CryptoContext::from_config(&config.encryption)?,
         };
         vault.initialize_layout()?;
@@ -126,6 +141,10 @@ impl Vault {
             .with_context(|| format!("missing object {id}"))
     }
 
+    pub fn refresh_object_metadata(&self) -> Result<()> {
+        self.storage.refresh_objects()
+    }
+
     pub fn visit_file_chunks(
         &self,
         file: &FileRecord,
@@ -189,6 +208,45 @@ impl Vault {
         Ok(contents)
     }
 
+    pub fn record_full_verification(&self, snapshot_id: &str) -> Result<DateTime<Utc>> {
+        validate_snapshot_id(snapshot_id)?;
+        let verified_at = Utc::now();
+        let receipt = VerificationReceipt {
+            format_version: VERIFICATION_RECEIPT_VERSION,
+            vault_id: self.vault_id,
+            snapshot_id: snapshot_id.to_string(),
+            verified_at,
+            level: "full".to_string(),
+        };
+        let mut contents =
+            serde_json::to_vec_pretty(&receipt).context("failed to encode verification receipt")?;
+        contents.push(b'\n');
+        write_private_atomic(&self.verification_path(snapshot_id)?, &contents)?;
+        Ok(verified_at)
+    }
+
+    pub fn full_verification_time(&self, snapshot_id: &str) -> Result<Option<DateTime<Utc>>> {
+        let path = self.verification_path(snapshot_id)?;
+        let contents = match fs::read(&path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("failed to read receipt {}", path.display()));
+            }
+        };
+        let receipt: VerificationReceipt = serde_json::from_slice(&contents)
+            .with_context(|| format!("failed to parse receipt {}", path.display()))?;
+        if receipt.format_version != VERIFICATION_RECEIPT_VERSION
+            || receipt.vault_id != self.vault_id
+            || receipt.snapshot_id != snapshot_id
+            || receipt.level != "full"
+        {
+            bail!("invalid verification receipt {}", path.display());
+        }
+        Ok(Some(receipt.verified_at))
+    }
+
     pub fn publish_manifest(&self, manifest: &Manifest) -> Result<()> {
         validate_snapshot_id(&manifest.snapshot_id)?;
         let mut plaintext =
@@ -230,7 +288,7 @@ impl Vault {
 
     fn initialize_layout(&self) -> Result<()> {
         create_private_directory(&self.state_root)?;
-        for relative in ["locks", "staging"] {
+        for relative in ["locks", "staging", "verification"] {
             create_private_directory(&self.state_root.join(relative))?;
         }
         Ok(())
@@ -303,6 +361,14 @@ impl Vault {
             EncryptionMode::Age => ".json.age",
         }
     }
+
+    fn verification_path(&self, snapshot_id: &str) -> Result<PathBuf> {
+        validate_snapshot_id(snapshot_id)?;
+        Ok(self
+            .state_root
+            .join("verification")
+            .join(format!("{snapshot_id}.json")))
+    }
 }
 
 fn open_private_rw(path: &Path) -> Result<File> {
@@ -316,6 +382,35 @@ fn open_private_rw(path: &Path) -> Result<File> {
     options
         .open(path)
         .with_context(|| format!("failed to open {}", path.display()))
+}
+
+fn write_private_atomic(path: &Path, contents: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .with_context(|| format!("path {} has no parent", path.display()))?;
+    let mut temporary = NamedTempFile::new_in(parent)
+        .with_context(|| format!("failed to create temporary file in {}", parent.display()))?;
+    temporary.write_all(contents)?;
+    temporary.as_file().sync_all()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        temporary
+            .as_file()
+            .set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+    fs::rename(temporary.path(), path)
+        .with_context(|| format!("failed to publish {}", path.display()))?;
+    sync_directory(parent)
+}
+
+fn sync_directory(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    File::open(path)
+        .with_context(|| format!("failed to open directory {}", path.display()))?
+        .sync_all()
+        .with_context(|| format!("failed to sync directory {}", path.display()))?;
+    Ok(())
 }
 
 #[cfg(test)]

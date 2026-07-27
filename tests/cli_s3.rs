@@ -14,8 +14,18 @@ fn s3_backup_deduplicates_verifies_lists_and_recovers() {
     )
     .unwrap();
 
+    fs::write(&fixture.aws_log, b"").unwrap();
     let first = fixture.backup(None);
     assert!(first.new_objects > 0);
+    let aws_log = fs::read_to_string(&fixture.aws_log).unwrap();
+    let object_list_calls = aws_log
+        .lines()
+        .filter(|line| *line == "s3api list-objects-v2")
+        .count();
+    assert!(
+        object_list_calls <= 8,
+        "object metadata was queried per chunk:\n{aws_log}"
+    );
     let second = fixture.backup(None);
     assert_eq!(second.new_objects, 0);
     assert_eq!(second.new_stored_bytes, 0);
@@ -140,6 +150,7 @@ struct S3Fixture {
     config: PathBuf,
     cloud: PathBuf,
     state_home: PathBuf,
+    aws_log: PathBuf,
     claude: PathBuf,
 }
 
@@ -150,14 +161,17 @@ impl S3Fixture {
         let cloud = temp.path().join("cloud");
         let state_home = temp.path().join("state");
         let aws = temp.path().join("fake-aws");
+        let aws_log = temp.path().join("aws.log");
         let claude = temp.path().join("claude");
         fs::create_dir_all(claude.join("projects/demo")).unwrap();
         fs::create_dir_all(&cloud).unwrap();
+        fs::write(&aws_log, b"").unwrap();
         write_fake_aws(&aws);
 
         Command::cargo_bin("akeep")
             .unwrap()
             .env("FAKE_S3_ROOT", &cloud)
+            .env("FAKE_S3_LOG", &aws_log)
             .env("XDG_STATE_HOME", &state_home)
             .args([
                 "--config",
@@ -189,6 +203,7 @@ impl S3Fixture {
             config,
             cloud,
             state_home,
+            aws_log,
             claude,
         }
     }
@@ -197,6 +212,7 @@ impl S3Fixture {
         let mut command = Command::cargo_bin("akeep").unwrap();
         command
             .env("FAKE_S3_ROOT", &self.cloud)
+            .env("FAKE_S3_LOG", &self.aws_log)
             .env("XDG_STATE_HOME", &self.state_home)
             .args(["--config", self.config.to_str().unwrap()]);
         command
@@ -234,6 +250,9 @@ done
 service=${1:?}
 operation=${2:?}
 shift 2
+if [ -n "${FAKE_S3_LOG:-}" ]; then
+    printf '%s %s\n' "$service" "$operation" >> "$FAKE_S3_LOG"
+fi
 
 if [ "$service" = "s3" ] && [ "$operation" = "cp" ]; then
     source=${1:?}

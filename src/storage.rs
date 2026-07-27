@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::Mutex;
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -31,6 +33,7 @@ pub struct S3Storage {
     region: Option<String>,
     profile: Option<String>,
     endpoint_url: Option<String>,
+    object_cache: Mutex<Option<HashMap<String, ObjectMetadata>>>,
 }
 
 #[derive(Deserialize)]
@@ -74,6 +77,7 @@ impl Storage {
                 region: region.clone(),
                 profile: profile.clone(),
                 endpoint_url: endpoint_url.clone(),
+                object_cache: Mutex::new(None),
             })),
         }
     }
@@ -121,6 +125,13 @@ impl Storage {
                 storage.list_response("", Some(1))?;
                 Ok(())
             }
+        }
+    }
+
+    pub fn refresh_objects(&self) -> Result<()> {
+        match self {
+            Self::Filesystem(_) => Ok(()),
+            Self::S3(storage) => storage.refresh_objects(),
         }
     }
 
@@ -215,6 +226,20 @@ impl S3Storage {
     }
 
     fn metadata(&self, key: &str) -> Result<Option<ObjectMetadata>> {
+        if key.starts_with("objects/") {
+            let mut cache = self
+                .object_cache
+                .lock()
+                .map_err(|_| anyhow::anyhow!("S3 object cache lock is poisoned"))?;
+            if cache.is_none() {
+                *cache = Some(self.list_object_metadata()?);
+            }
+            return Ok(cache.as_ref().and_then(|cache| cache.get(key).copied()));
+        }
+        self.metadata_uncached(key)
+    }
+
+    fn metadata_uncached(&self, key: &str) -> Result<Option<ObjectMetadata>> {
         let full_key = self.full_key(key);
         let response = self.list_response(&full_key, Some(1))?;
         Ok(response
@@ -241,16 +266,29 @@ impl S3Storage {
             .arg(&uri)
             .arg("--only-show-errors");
         run(&mut command, "upload S3 object")?;
-        let remote = self
-            .metadata(key)?
-            .with_context(|| format!("uploaded S3 object is missing: {uri}"))?;
-        if remote.size != contents.len() as u64 {
-            bail!(
-                "uploaded S3 object has size {}, expected {}: {}",
-                remote.size,
-                contents.len(),
-                uri
+        if key.starts_with("objects/") {
+            let mut cache = self
+                .object_cache
+                .lock()
+                .map_err(|_| anyhow::anyhow!("S3 object cache lock is poisoned"))?;
+            cache.get_or_insert_with(HashMap::new).insert(
+                key.to_string(),
+                ObjectMetadata {
+                    size: contents.len() as u64,
+                },
             );
+        } else {
+            let remote = self
+                .metadata_uncached(key)?
+                .with_context(|| format!("uploaded S3 object is missing: {uri}"))?;
+            if remote.size != contents.len() as u64 {
+                bail!(
+                    "uploaded S3 object has size {}, expected {}: {}",
+                    remote.size,
+                    contents.len(),
+                    uri
+                );
+            }
         }
         Ok(())
     }
@@ -285,6 +323,33 @@ impl S3Storage {
         }
         let output = run(&mut command, "list S3 objects")?;
         serde_json::from_slice(&output.stdout).context("AWS CLI returned invalid list JSON")
+    }
+
+    fn list_object_metadata(&self) -> Result<HashMap<String, ObjectMetadata>> {
+        let full_prefix = self.full_key("objects/");
+        let base = format!("{}/", self.prefix);
+        let objects = self
+            .list_response(&full_prefix, None)?
+            .contents
+            .into_iter()
+            .filter_map(|object| {
+                object
+                    .key
+                    .strip_prefix(&base)
+                    .map(|key| (key.to_string(), ObjectMetadata { size: object.size }))
+            })
+            .collect::<HashMap<_, _>>();
+        Ok(objects)
+    }
+
+    fn refresh_objects(&self) -> Result<()> {
+        let objects = self.list_object_metadata()?;
+        let mut cache = self
+            .object_cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("S3 object cache lock is poisoned"))?;
+        *cache = Some(objects);
+        Ok(())
     }
 
     fn versioning_status(&self) -> Result<String> {

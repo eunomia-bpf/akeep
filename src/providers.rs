@@ -23,6 +23,8 @@ pub enum Provider {
 }
 
 impl Provider {
+    pub const ADAPTER_VERSION: u32 = 1;
+
     pub const ALL: [Self; 5] = [
         Self::ClaudeCode,
         Self::Codex,

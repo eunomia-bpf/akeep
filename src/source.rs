@@ -234,6 +234,11 @@ fn snapshot_sqlite(source: &Path, destination: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
 
     use chrono::DateTime;
     use tempfile::TempDir;
@@ -263,6 +268,76 @@ mod tests {
             .query_row("SELECT body FROM messages", [], |row| row.get(0))
             .unwrap();
         assert_eq!(body, "hello");
+    }
+
+    #[test]
+    fn snapshots_sqlite_during_concurrent_wal_writes() {
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("live.sqlite");
+        let destination = temp.path().join("snapshot.sqlite");
+        let mut connection = Connection::open(&source).unwrap();
+        connection
+            .pragma_update(None, "journal_mode", "WAL")
+            .unwrap();
+        connection
+            .execute(
+                "CREATE TABLE events (id INTEGER PRIMARY KEY, body TEXT NOT NULL)",
+                [],
+            )
+            .unwrap();
+        {
+            let transaction = connection.transaction().unwrap();
+            for index in 0..10_000 {
+                transaction
+                    .execute(
+                        "INSERT INTO events (body) VALUES (?1)",
+                        [format!("seed-{index}")],
+                    )
+                    .unwrap();
+            }
+            transaction.commit().unwrap();
+        }
+        drop(connection);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ready_sender, ready_receiver) = mpsc::sync_channel(1);
+        let writer_source = source.clone();
+        let writer_stop = Arc::clone(&stop);
+        let writer = thread::spawn(move || {
+            let connection = Connection::open(writer_source).unwrap();
+            connection.busy_timeout(Duration::from_secs(2)).unwrap();
+            connection
+                .pragma_update(None, "synchronous", "NORMAL")
+                .unwrap();
+            connection
+                .execute("INSERT INTO events (body) VALUES ('writer-ready')", [])
+                .unwrap();
+            ready_sender.send(()).unwrap();
+            while !writer_stop.load(Ordering::Relaxed) {
+                let _ = connection.execute("INSERT INTO events (body) VALUES ('concurrent')", []);
+                thread::sleep(Duration::from_millis(1));
+            }
+        });
+
+        ready_receiver
+            .recv_timeout(Duration::from_secs(15))
+            .unwrap();
+        snapshot_sqlite(&source, &destination).unwrap();
+        stop.store(true, Ordering::Relaxed);
+        writer.join().unwrap();
+
+        let snapshot = Connection::open(destination).unwrap();
+        let integrity: String = snapshot
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(integrity, "ok");
+        let (count, maximum): (i64, i64) = snapshot
+            .query_row("SELECT COUNT(*), MAX(id) FROM events", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert!(count > 1);
+        assert_eq!(count, maximum);
     }
 
     #[test]
