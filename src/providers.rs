@@ -92,32 +92,32 @@ pub fn specifications(config: &Config) -> Result<Vec<ProviderSpec>> {
 
     let claude = configured_path(
         config.sources.claude_home.as_ref(),
-        "CLAUDE_HOME",
+        &["CLAUDE_CONFIG_DIR", "CLAUDE_HOME"],
         home.join(".claude"),
     );
     let codex = configured_path(
         config.sources.codex_home.as_ref(),
-        "CODEX_HOME",
+        &["CODEX_HOME"],
         home.join(".codex"),
     );
     let grok = configured_path(
         config.sources.grok_home.as_ref(),
-        "GROK_HOME",
+        &["GROK_HOME"],
         home.join(".grok"),
     );
     let kimi = configured_path(
         config.sources.kimi_home.as_ref(),
-        "KIMI_CODE_HOME",
+        &["KIMI_CODE_HOME"],
         home.join(".kimi-code"),
     );
     let opencode_share = configured_path(
         config.sources.opencode_share.as_ref(),
-        "OPENCODE_SHARE_DIR",
+        &["OPENCODE_SHARE_DIR"],
         xdg_data.join("opencode"),
     );
     let opencode_state = configured_path(
         config.sources.opencode_state.as_ref(),
-        "OPENCODE_STATE_DIR",
+        &["OPENCODE_STATE_DIR"],
         xdg_state.join("opencode"),
     );
 
@@ -130,10 +130,18 @@ pub fn specifications(config: &Config) -> Result<Vec<ProviderSpec>> {
     ])
 }
 
-fn configured_path(override_path: Option<&PathBuf>, env_name: &str, fallback: PathBuf) -> PathBuf {
+fn configured_path(
+    override_path: Option<&PathBuf>,
+    env_names: &[&str],
+    fallback: PathBuf,
+) -> PathBuf {
     override_path
         .cloned()
-        .or_else(|| env::var_os(env_name).map(PathBuf::from))
+        .or_else(|| {
+            env_names
+                .iter()
+                .find_map(|env_name| env::var_os(env_name).map(PathBuf::from))
+        })
         .unwrap_or(fallback)
 }
 

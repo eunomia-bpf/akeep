@@ -16,7 +16,7 @@ trap cleanup_demo EXIT
 
 run_akeep() {
     env \
-        CLAUDE_HOME="$AKEEP_DEMO_ROOT/claude" \
+        CLAUDE_CONFIG_DIR="$AKEEP_DEMO_ROOT/claude" \
         CODEX_HOME="$AKEEP_DEMO_ROOT/codex" \
         GROK_HOME="$AKEEP_DEMO_ROOT/grok" \
         KIMI_CODE_HOME="$AKEEP_DEMO_ROOT/kimi" \
