@@ -32,6 +32,8 @@ The suite covers:
 - non-empty, symlinked, and vault-overlapping recovery target rejection;
 - incomplete recovery markers and byte/hash validation;
 - provider-scoped recovery without a false whole-snapshot verification receipt;
+- bounded parallel archive, verification, and recovery with ordered
+  reconstruction of multi-chunk files;
 - 32 MiB multi-chunk scale and incremental rerun behavior;
 - systemd ownership, rollback, escaping, persistence, and uninstall behavior;
 - search, exact JSON/base64 export, Markdown export, and semantic handoff.

@@ -23,5 +23,9 @@ the first release is tagged.
 - Fault-injection, concurrent-WAL, remote interruption, and scale tests.
 - Bounded cross-file archive concurrency with per-object coordination, keeping
   large multi-provider first backups practical without unbounded memory.
+- Bounded parallel full verification and scratch recovery, including ordered
+  reconstruction and hash checks for multi-chunk files.
+- Native `CLAUDE_CONFIG_DIR` discovery with a backwards-compatible
+  `CLAUDE_HOME` alias.
 
 [Unreleased]: https://github.com/eunomia-bpf/akeep/commits/main

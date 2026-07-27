@@ -18,6 +18,23 @@ Compare recovered file BLAKE3 hashes with the JSON export or manifest. Open
 recovered SQLite files with `PRAGMA integrity_check`. Keep the scratch directory
 separate from live provider homes.
 
+To confirm that current provider binaries recognize the restored native state,
+open their local resume pickers against the scratch copy and exit without
+starting a model turn:
+
+```console
+# Run from the original project directory represented by the restored session.
+CLAUDE_CONFIG_DIR=/tmp/akeep-drill/claude-code claude --resume
+
+# --all avoids filtering the picker by the current working directory.
+CODEX_HOME=/tmp/akeep-drill/codex codex resume --all
+```
+
+Do not point these variables at the live provider homes during a drill. A
+provider may update indexes inside the scratch copy. Recognition means a known
+restored session appears in the native picker; it does not require sending a
+prompt or making a network request.
+
 ## Interrupted backup
 
 An interrupted backup may leave immutable unreferenced objects, but it publishes
