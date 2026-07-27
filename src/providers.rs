@@ -409,6 +409,8 @@ mod tests {
             },
             encryption: EncryptionConfig {
                 mode: EncryptionMode::None,
+                recipient: None,
+                identity_file: None,
             },
             sources: SourceOverrides::default(),
         }

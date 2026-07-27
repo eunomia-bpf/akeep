@@ -111,7 +111,7 @@ impl Manifest {
         if self.archive.compression != "zstd" {
             bail!("unsupported compression {}", self.archive.compression);
         }
-        if self.archive.encryption != "none" {
+        if !matches!(self.archive.encryption.as_str(), "none" | "age") {
             bail!("unsupported encryption {}", self.archive.encryption);
         }
 

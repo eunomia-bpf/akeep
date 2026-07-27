@@ -179,6 +179,109 @@ fn recover_refuses_a_target_inside_the_vault() {
     assert!(!recovery.exists());
 }
 
+#[test]
+fn age_vault_encrypts_objects_and_manifests_and_recovers() {
+    let temp = TempDir::new().unwrap();
+    let config_path = temp.path().join("config.toml");
+    let vault = temp.path().join("vault");
+    let claude = temp.path().join("claude");
+    fs::create_dir_all(claude.join("projects/demo")).unwrap();
+    fs::write(
+        claude.join("projects/demo/session.jsonl"),
+        b"private transcript",
+    )
+    .unwrap();
+
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            config_path.to_str().unwrap(),
+            "init",
+            "--target",
+            vault.to_str().unwrap(),
+            "--encryption",
+            "age",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Recovery identity:"));
+
+    let mut config = akeep::config::Config::load(&config_path).unwrap();
+    let identity = config.encryption.identity_file.clone().unwrap();
+    config.archive.chunk_size = 4;
+    config.sources.claude_home = Some(claude);
+    config.sources.codex_home = Some(temp.path().join("missing-codex"));
+    config.sources.grok_home = Some(temp.path().join("missing-grok"));
+    config.sources.kimi_home = Some(temp.path().join("missing-kimi"));
+    config.sources.opencode_share = Some(temp.path().join("missing-opencode-share"));
+    config.sources.opencode_state = Some(temp.path().join("missing-opencode-state"));
+    fs::write(&config_path, toml::to_string_pretty(&config).unwrap()).unwrap();
+
+    let output = Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            config_path.to_str().unwrap(),
+            "backup",
+            "--json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: akeep::archive::BackupReport = serde_json::from_slice(&output.stdout).unwrap();
+    let manifest_path = vault
+        .join("manifests")
+        .join(format!("{}.json.age", report.snapshot_id));
+    let manifest_ciphertext = fs::read(&manifest_path).unwrap();
+    assert!(manifest_ciphertext.starts_with(b"age-encryption.org/v1"));
+    assert!(
+        !String::from_utf8_lossy(&manifest_ciphertext).contains("session.jsonl"),
+        "encrypted manifest leaked a logical path"
+    );
+
+    let recovery = temp.path().join("recovery");
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            config_path.to_str().unwrap(),
+            "verify",
+            "latest",
+        ])
+        .assert()
+        .success();
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args([
+            "--config",
+            config_path.to_str().unwrap(),
+            "recover",
+            "latest",
+            "--to",
+            recovery.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read(recovery.join("claude-code/projects/demo/session.jsonl")).unwrap(),
+        b"private transcript"
+    );
+
+    let hidden_identity = identity.with_extension("hidden");
+    fs::rename(&identity, &hidden_identity).unwrap();
+    Command::cargo_bin("akeep")
+        .unwrap()
+        .args(["--config", config_path.to_str().unwrap(), "verify"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("age identity"));
+}
+
 struct Fixture {
     temp: TempDir,
     config: PathBuf,

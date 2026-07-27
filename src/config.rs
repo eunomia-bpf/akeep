@@ -21,12 +21,14 @@ pub const DEFAULT_COMPRESSION_LEVEL: i32 = 3;
 pub enum EncryptionMode {
     #[default]
     None,
+    Age,
 }
 
 impl fmt::Display for EncryptionMode {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::None => formatter.write_str("none"),
+            Self::Age => formatter.write_str("age"),
         }
     }
 }
@@ -75,6 +77,10 @@ pub struct ArchiveConfig {
 #[serde(deny_unknown_fields)]
 pub struct EncryptionConfig {
     pub mode: EncryptionMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recipient: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity_file: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -127,6 +133,31 @@ impl Config {
         if self.target.path.as_os_str().is_empty() {
             bail!("target.path must not be empty");
         }
+        match self.encryption.mode {
+            EncryptionMode::None => {
+                if self.encryption.recipient.is_some() || self.encryption.identity_file.is_some() {
+                    bail!("encryption recipient/identity require mode = \"age\"");
+                }
+            }
+            EncryptionMode::Age => {
+                if self
+                    .encryption
+                    .recipient
+                    .as_deref()
+                    .is_none_or(str::is_empty)
+                {
+                    bail!("age encryption requires encryption.recipient");
+                }
+                if self
+                    .encryption
+                    .identity_file
+                    .as_ref()
+                    .is_none_or(|path| path.as_os_str().is_empty())
+                {
+                    bail!("age encryption requires encryption.identity_file");
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -148,7 +179,7 @@ pub fn default_vault_path() -> Result<PathBuf> {
 pub fn initialize(
     config_path: &Path,
     target_path: &Path,
-    encryption: EncryptionMode,
+    encryption: EncryptionConfig,
 ) -> Result<Config> {
     if config_path.exists() {
         bail!(
@@ -172,7 +203,7 @@ pub fn initialize(
             chunk_size: DEFAULT_CHUNK_SIZE,
             compression_level: DEFAULT_COMPRESSION_LEVEL,
         },
-        encryption: EncryptionConfig { mode: encryption },
+        encryption,
         sources: SourceOverrides::default(),
     };
     config.validate()?;
@@ -276,6 +307,8 @@ mod tests {
             },
             encryption: EncryptionConfig {
                 mode: EncryptionMode::None,
+                recipient: None,
+                identity_file: None,
             },
             sources: SourceOverrides::default(),
         }

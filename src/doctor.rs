@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 use crate::config::Config;
+use crate::crypto::CryptoContext;
 use crate::providers::{Provider, ProviderSpec, SourceItem, specifications};
 
 pub const DOCTOR_REPORT_VERSION: u32 = 1;
@@ -54,6 +55,9 @@ pub fn inspect(config_path: &Path, config: &Config) -> DoctorReport {
             "vault target is not a directory: {}",
             config.target.path.display()
         ));
+    }
+    if let Err(error) = CryptoContext::from_config(&config.encryption) {
+        errors.push(format!("encryption configuration is not usable: {error:#}"));
     }
 
     let specs = match specifications(config) {
@@ -349,6 +353,8 @@ mod tests {
             },
             encryption: EncryptionConfig {
                 mode: EncryptionMode::None,
+                recipient: None,
+                identity_file: None,
             },
             sources: SourceOverrides::default(),
         }

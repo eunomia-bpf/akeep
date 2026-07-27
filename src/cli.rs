@@ -5,7 +5,9 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::archive;
 use crate::config::{self, EncryptionMode};
+use crate::crypto;
 use crate::doctor;
+use crate::vault::Vault;
 
 #[derive(Debug, Parser)]
 #[command(name = "akeep", version, about)]
@@ -54,6 +56,10 @@ pub struct InitArgs {
     /// Vault encryption mode.
     #[arg(long, value_enum, default_value_t = EncryptionMode::None)]
     pub encryption: EncryptionMode,
+
+    /// Existing age X25519 identity file; otherwise a new recovery identity is generated.
+    #[arg(long, value_name = "FILE", requires = "encryption")]
+    pub age_identity_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -115,11 +121,29 @@ pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::Init(args) => {
             let target = args.target.unwrap_or(config::default_vault_path()?);
-            let created = config::initialize(&config_path, &target, args.encryption)?;
+            let prepared = crypto::prepare_encryption(
+                args.encryption,
+                &config_path,
+                args.age_identity_file.as_deref(),
+            )?;
+            let created = match config::initialize(&config_path, &target, prepared.config) {
+                Ok(created) => created,
+                Err(error) => {
+                    if let Some(path) = prepared.generated_identity_file {
+                        let _ = std::fs::remove_file(path);
+                    }
+                    return Err(error);
+                }
+            };
+            Vault::open(&created)?;
             println!("Initialized Akeep vault {}", created.vault.id);
             println!("Config: {}", config_path.display());
             println!("Target: {}", created.target.path.display());
             println!("Encryption: {}", created.encryption.mode);
+            if let Some(path) = created.encryption.identity_file {
+                println!("Recovery identity: {}", path.display());
+                println!("Back up this identity separately; losing it makes recovery impossible.");
+            }
         }
         Command::Config { command } => match command {
             ConfigCommand::Path => println!("{}", config_path.display()),

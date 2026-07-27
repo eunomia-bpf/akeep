@@ -4,15 +4,19 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use fs2::FileExt;
+use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
+use uuid::Uuid;
 
-use crate::config::{Config, create_private_directory};
+use crate::config::{Config, EncryptionMode, create_private_directory};
+use crate::crypto::CryptoContext;
 use crate::manifest::{Manifest, validate_object_id, validate_snapshot_id};
 
-const OBJECT_EXTENSION: &str = "zst";
+const VAULT_METADATA_VERSION: u32 = 1;
 
 pub struct Vault {
     root: PathBuf,
+    codec: CryptoContext,
 }
 
 pub struct VaultLock {
@@ -26,12 +30,22 @@ pub struct StoredChunk {
     pub is_new: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct VaultMetadata {
+    format_version: u32,
+    vault_id: Uuid,
+    encryption: EncryptionMode,
+}
+
 impl Vault {
     pub fn open(config: &Config) -> Result<Self> {
         let vault = Self {
             root: config.target.path.clone(),
+            codec: CryptoContext::from_config(&config.encryption)?,
         };
         vault.initialize_layout()?;
+        vault.initialize_metadata(config)?;
         Ok(vault)
     }
 
@@ -75,8 +89,9 @@ impl Vault {
             .parent()
             .with_context(|| format!("object path {} has no parent", path.display()))?;
         create_private_directory(parent)?;
-        let encoded = zstd::stream::encode_all(Cursor::new(raw), compression_level)
+        let compressed = zstd::stream::encode_all(Cursor::new(raw), compression_level)
             .context("failed to compress archive chunk")?;
+        let encoded = self.codec.encrypt(&compressed)?;
         let stored_size = encoded.len() as u64;
         atomic_create(&path, &encoded)?;
         let decoded = self.read_chunk(&id)?;
@@ -93,9 +108,11 @@ impl Vault {
 
     pub fn read_chunk(&self, id: &str) -> Result<Vec<u8>> {
         let path = self.object_path(id)?;
-        let file = File::open(&path)
+        let encoded = fs::read(&path)
             .with_context(|| format!("missing or unreadable object {}", path.display()))?;
-        zstd::stream::decode_all(file).with_context(|| format!("failed to decompress object {id}"))
+        let compressed = self.codec.decrypt(&encoded)?;
+        zstd::stream::decode_all(Cursor::new(compressed))
+            .with_context(|| format!("failed to decompress object {id}"))
     }
 
     pub fn object_metadata(&self, id: &str) -> Result<fs::Metadata> {
@@ -106,9 +123,10 @@ impl Vault {
 
     pub fn publish_manifest(&self, manifest: &Manifest) -> Result<()> {
         validate_snapshot_id(&manifest.snapshot_id)?;
-        let mut encoded =
+        let mut plaintext =
             serde_json::to_vec_pretty(manifest).context("failed to encode snapshot manifest")?;
-        encoded.push(b'\n');
+        plaintext.push(b'\n');
+        let encoded = self.codec.encrypt(&plaintext)?;
         let path = self.manifest_path(&manifest.snapshot_id)?;
         atomic_create(&path, &encoded)?;
         atomic_replace(
@@ -121,9 +139,10 @@ impl Vault {
     pub fn load_manifest(&self, reference: &str) -> Result<Manifest> {
         let snapshot_id = self.resolve_reference(reference)?;
         let path = self.manifest_path(&snapshot_id)?;
-        let contents = fs::read(&path)
+        let encoded = fs::read(&path)
             .with_context(|| format!("failed to read manifest {}", path.display()))?;
-        serde_json::from_slice(&contents)
+        let plaintext = self.codec.decrypt(&encoded)?;
+        serde_json::from_slice(&plaintext)
             .with_context(|| format!("failed to parse manifest {}", path.display()))
     }
 
@@ -135,7 +154,10 @@ impl Vault {
         {
             let entry = entry?;
             if entry.file_type()?.is_file()
-                && entry.path().extension().and_then(|value| value.to_str()) == Some("json")
+                && entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.ends_with(self.manifest_suffix()))
             {
                 paths.push(entry.path());
             }
@@ -145,9 +167,10 @@ impl Vault {
         paths
             .into_iter()
             .map(|path| {
-                let contents = fs::read(&path)
+                let encoded = fs::read(&path)
                     .with_context(|| format!("failed to read manifest {}", path.display()))?;
-                serde_json::from_slice(&contents)
+                let plaintext = self.codec.decrypt(&encoded)?;
+                serde_json::from_slice(&plaintext)
                     .with_context(|| format!("failed to parse manifest {}", path.display()))
             })
             .collect()
@@ -159,6 +182,33 @@ impl Vault {
             create_private_directory(&self.root.join(relative))?;
         }
         Ok(())
+    }
+
+    fn initialize_metadata(&self, config: &Config) -> Result<()> {
+        let path = self.root.join("vault.json");
+        let expected = VaultMetadata {
+            format_version: VAULT_METADATA_VERSION,
+            vault_id: config.vault.id,
+            encryption: self.codec.mode(),
+        };
+        if path.exists() {
+            let contents = fs::read(&path)
+                .with_context(|| format!("failed to read vault metadata {}", path.display()))?;
+            let actual: VaultMetadata = serde_json::from_slice(&contents)
+                .with_context(|| format!("failed to parse vault metadata {}", path.display()))?;
+            if actual != expected {
+                bail!(
+                    "vault metadata at {} does not match the active configuration",
+                    path.display()
+                );
+            }
+            return Ok(());
+        }
+
+        let mut encoded =
+            serde_json::to_vec_pretty(&expected).context("failed to encode vault metadata")?;
+        encoded.push(b'\n');
+        atomic_create(&path, &encoded)
     }
 
     fn resolve_reference(&self, reference: &str) -> Result<String> {
@@ -179,16 +229,30 @@ impl Vault {
         Ok(self
             .root
             .join("manifests")
-            .join(format!("{snapshot_id}.json")))
+            .join(format!("{snapshot_id}{}", self.manifest_suffix())))
     }
 
     fn object_path(&self, id: &str) -> Result<PathBuf> {
         validate_object_id(id)?;
         Ok(self.root.join("objects").join(&id[..2]).join(format!(
-            "{}.{}",
+            "{}{}",
             &id[2..],
-            OBJECT_EXTENSION
+            self.object_suffix()
         )))
+    }
+
+    fn object_suffix(&self) -> &'static str {
+        match self.codec.mode() {
+            EncryptionMode::None => ".zst",
+            EncryptionMode::Age => ".zst.age",
+        }
+    }
+
+    fn manifest_suffix(&self) -> &'static str {
+        match self.codec.mode() {
+            EncryptionMode::None => ".json",
+            EncryptionMode::Age => ".json.age",
+        }
     }
 }
 
@@ -339,6 +403,8 @@ mod tests {
             },
             encryption: EncryptionConfig {
                 mode: EncryptionMode::None,
+                recipient: None,
+                identity_file: None,
             },
             sources: SourceOverrides::default(),
         }

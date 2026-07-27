@@ -70,8 +70,19 @@ vault under `~/.local/share/akeep/vaults/default`. Review `akeep doctor` before
 the first backup. Akeep skips known credential, cache, and temporary paths and
 never follows symlinks.
 
-S3-compatible storage, systemd scheduling, optional encryption, cross-agent
-semantic handoff, and local search are the next implementation milestones.
+Encryption remains optional. To create an age-encrypted vault:
+
+```console
+akeep init --encryption age
+```
+
+Akeep generates a mode-0600 recovery identity beside the configuration and
+prints its path. Back it up separately: if every copy is lost, nobody can
+decrypt the vault. `akeep doctor` performs an encrypt/decrypt self-test whenever
+encryption is enabled.
+
+S3-compatible storage, systemd scheduling, cross-agent semantic handoff, and
+local search are the next implementation milestones.
 
 ## What Akeep is not
 
