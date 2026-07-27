@@ -207,21 +207,34 @@ Akeep may replace the current weekly service only after all of these pass:
 
 - [x] The five current providers are discovered with documented exclusions.
 - [ ] At least three scheduled Akeep backups complete over at least 14 days.
-- [ ] The latest recovery point is fully recovered into scratch and byte hashes
+- [x] The latest recovery point is fully recovered into scratch and byte hashes
       match the snapshotted inputs.
 - [ ] A recovery point at least one week old is fully recovered.
-- [ ] A deliberately corrupted copied archive is rejected by `verify`.
+- [x] A deliberately corrupted copied archive is rejected by `verify`.
 - [x] An interrupted backup resumes or safely restarts without publishing a
       false-complete recovery point.
 - [x] A live SQLite database is backed up under concurrent writes and passes
       integrity checks after recovery.
-- [ ] Claude Code and Codex can each recognize a restored fixture in an isolated
+- [x] Claude Code and Codex can each recognize a restored fixture in an isolated
       test home, or the exact incompatibility is documented.
 - [x] The old S3 backup remains untouched throughout shadow mode.
 - [x] Operator runbook documents how to re-enable the old timer.
 
 Only then should the old timer be disabled. Its remote backup remains a
 fallback until Akeep has at least one additional successful restore drill.
+
+### Shadow-run evidence
+
+On 2026-07-27 UTC, the first real five-provider shadow run published a recovery
+point containing 52,432 files and 55,206,535,333 logical bytes. A full isolated
+recovery reproduced every file and byte, all seven recovered SQLite databases
+passed `PRAGMA integrity_check`, and current Claude Code and Codex clients
+recognized restored native state without a model request. The recovery point
+now has a local full-verification receipt.
+
+This is evidence for one current recovery point, not a substitute for the
+remaining 14-day and week-old recovery gates. The previous backup timer remains
+enabled.
 
 ## 7. Implementation shape
 

@@ -83,4 +83,6 @@ stricter than CI. It requires three scheduled runs across at least 14 days,
 current and week-old full restores, corruption rejection, and provider-native
 recognition. The pre-existing backup remains enabled until every unchecked item
 passes. Akeep's code can be release-ready before enough wall-clock evidence
-exists to replace that service.
+exists to replace that service. The checklist records dated, non-secret
+shadow-run evidence; bucket names, account details, source paths, and session
+content must never be committed.
