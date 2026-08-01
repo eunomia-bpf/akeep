@@ -25,7 +25,8 @@ Akeep is designed around five promises:
 
 - **Versioned:** commits have messages and parent links; `HEAD~N`, `log`, and
   `diff` make history understandable.
-- **Local-first:** no account, network request, or telemetry is required.
+- **User-controlled:** choose where history lives: a local filesystem or an
+  S3-compatible storage target.
 - **Exact:** raw provider files remain the source of truth and are preserved
   byte-for-byte.
 - **Private:** no upload or telemetry happens by default. Client-side

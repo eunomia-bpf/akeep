@@ -220,9 +220,9 @@ Current behavior:
   access before downloading large payloads;
 - plaintext staging files use mode 0700 directories and are removed after use.
 
-No upload, account, or telemetry occurs merely because Akeep is installed. Exact
-algorithms and key wrapping are recorded in the archive-format specification
-and covered by tests.
+Installing Akeep does not contact a service. Network activity starts only after
+the user configures a remote target. Exact algorithms and key wrapping are
+recorded in the archive-format specification and covered by tests.
 
 ## 6. Migration safety gate for our existing backup
 

@@ -174,8 +174,8 @@ storage” 和 “clone” 等准确表达；“managed encrypted sync” 留给
 “Privacy first” 不能只是一句宣传语，也不等于强制用户承担丢失密钥的风险。
 它应变成可测试的产品约束：
 
-- 默认离线、无账号、无 telemetry；
-- 未配置远端时没有网络请求；
+- 当前 CLI 默认离线，未配置远端 target 时没有网络请求；
+- 未来托管服务可以作为可选 target，但不能取代本地和自有存储路径；
 - `encryption = none` 是正式支持和测试的模式；
 - 加密模式在创建 vault 时确定，不能每次 commit 临时切换；
 - 本地 target 可以默认不开加密；
@@ -293,7 +293,7 @@ Akeep 的楔子应该是：
 其他可测试标题：
 
 - “Your agent work deserves version history.”
-- “Akeep: local-first commits for Claude Code, Codex, and OpenCode history.”
+- “Akeep: Git-like commits for Claude Code, Codex, and OpenCode history.”
 - “Commit and diff your coding-agent history without changing your agent.”
 - “We corrupted our own Agent archive. Akeep caught it before checkout.”
 

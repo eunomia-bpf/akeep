@@ -12,7 +12,7 @@ or recoverability was affected.
 
 ## Security boundaries
 
-- Akeep is local-first and has no telemetry.
+- The current Akeep CLI has no telemetry.
 - Network access occurs only for an explicitly configured S3 target.
 - Client-side age encryption is optional. In plaintext mode, filesystem and
   storage administrators can read the archive.
