@@ -13,8 +13,7 @@ versions, check archive integrity, restore provider-native files, and clone the
 repository. Everything works locally; S3-compatible storage and age encryption
 are optional.
 
-> [!IMPORTANT]
-> Akeep is currently pre-alpha. The complete versioned-backup loop works with
+> [!IMPORTANT] The complete versioned-backup loop works with
 > local and S3-compatible targets, optional age encryption, full integrity
 > checks, scratch checkout, repository cloning, and a Linux systemd user timer.
 > Keep an existing backup during the documented shadow-run gate; software
@@ -40,27 +39,7 @@ Akeep is designed around five promises:
 - **Non-destructive:** commits never edit provider state, and checkout defaults
   to a separate scratch directory.
 
-## What works now
-
-The v0.1 release is intentionally a versioned backup-and-recovery product, not
-another history viewer or agent-memory layer.
-
-The current CLI:
-
-- discover raw history from Claude Code, Codex CLI, Grok CLI, Kimi Code, and
-  OpenCode;
-- take consistent snapshots of live SQLite databases;
-- create incremental, deduplicated, compressed archives;
-- optionally encrypt archives before sending them to a remote target;
-- write to a local directory or an S3-compatible object store;
-- commit, list, compare, integrity-check, and check out historical versions;
-- clone a local or S3-backed repository into a self-contained local bundle;
-- run full or provider-scoped scratch recovery drills;
-- install an optional weekly systemd user timer on Linux;
-- preserve deleted or superseded local sessions in the archive;
-- build a disposable local Claude Code/Codex full-text index;
-- export exact JSON/base64 or readable Markdown, and create reviewed
-  Claude Code ↔ Codex semantic handoff bundles.
+## Usage
 
 Build and exercise the current local CLI:
 
