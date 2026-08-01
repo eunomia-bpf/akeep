@@ -8,6 +8,8 @@ Primary success event: an integrity-checked checkout, not a successful upload
 
 ## 1. Product contract
 
+**Privacy-first, Git-like backup, recovery, migration, and sharing for AI agent session history.**
+
 Akeep gives coding-agent work an independent, Git-like version history without
 depending on provider retention policies or undocumented cloud APIs.
 

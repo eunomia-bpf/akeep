@@ -15,7 +15,7 @@ Akeep 值得做，但不能把自己定义成“又一个 Agent 对话查看器�
 
 英文主描述：
 
-> **Git-like, privacy-first version history for coding-agent work.**
+> **Privacy-first, Git-like backup, recovery, migration, and sharing for AI agent session history.**
 
 产品心智不是“给聊天文件套 Git”，而是把用户已经在产生的 Agent 状态自动
 保存成 commit：

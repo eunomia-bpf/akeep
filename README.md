@@ -3,7 +3,7 @@
 [![CI](https://github.com/eunomia-bpf/akeep/actions/workflows/ci.yml/badge.svg)](https://github.com/eunomia-bpf/akeep/actions/workflows/ci.yml)
 [![Security audit](https://github.com/eunomia-bpf/akeep/actions/workflows/audit.yml/badge.svg)](https://github.com/eunomia-bpf/akeep/actions/workflows/audit.yml)
 
-**Git-like version history for coding-agent work.**
+**Privacy-first, Git-like backup, recovery, migration, and sharing for AI agent session history.**
 
 Your agent history is not a cache.
 
