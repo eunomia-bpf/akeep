@@ -19,7 +19,7 @@ pub struct ObjectMetadata {
 
 pub enum Storage {
     Filesystem(FilesystemStorage),
-    S3(S3Storage),
+    S3(Box<S3Storage>),
 }
 
 pub struct FilesystemStorage {
@@ -34,6 +34,13 @@ pub struct S3Storage {
     profile: Option<String>,
     endpoint_url: Option<String>,
     object_cache: Mutex<Option<HashMap<String, ObjectMetadata>>>,
+    pending_objects: Mutex<PendingObjects>,
+}
+
+#[derive(Default)]
+struct PendingObjects {
+    root: Option<PathBuf>,
+    objects: HashMap<String, ObjectMetadata>,
 }
 
 #[derive(Deserialize)]
@@ -70,7 +77,7 @@ impl Storage {
                 profile,
                 endpoint_url,
                 aws_cli,
-            } => Ok(Self::S3(S3Storage {
+            } => Ok(Self::S3(Box::new(S3Storage {
                 aws_cli: aws_cli.clone().unwrap_or_else(|| PathBuf::from("aws")),
                 bucket: bucket.clone(),
                 prefix: prefix.clone(),
@@ -78,7 +85,8 @@ impl Storage {
                 profile: profile.clone(),
                 endpoint_url: endpoint_url.clone(),
                 object_cache: Mutex::new(None),
-            })),
+                pending_objects: Mutex::new(PendingObjects::default()),
+            }))),
         }
     }
 
@@ -125,6 +133,20 @@ impl Storage {
                 storage.list_response("", Some(1))?;
                 Ok(())
             }
+        }
+    }
+
+    pub fn configure_object_staging(&self, path: &Path) -> Result<()> {
+        match self {
+            Self::Filesystem(_) => Ok(()),
+            Self::S3(storage) => storage.configure_object_staging(path),
+        }
+    }
+
+    pub fn flush_pending_objects(&self) -> Result<()> {
+        match self {
+            Self::Filesystem(_) => Ok(()),
+            Self::S3(storage) => storage.flush_pending_objects(),
         }
     }
 
@@ -253,6 +275,36 @@ impl S3Storage {
         if !overwrite && self.metadata(key)?.is_some() {
             bail!("refusing to overwrite existing S3 object {}", self.uri(key));
         }
+        if !overwrite && key.starts_with("objects/") {
+            let root = self
+                .pending_objects
+                .lock()
+                .map_err(|_| anyhow::anyhow!("S3 pending-object lock is poisoned"))?
+                .root
+                .clone();
+            if let Some(root) = root {
+                let path = root.join(key);
+                let parent = path
+                    .parent()
+                    .with_context(|| format!("pending object {} has no parent", path.display()))?;
+                create_private_directory(parent)?;
+                atomic_create(&path, contents)?;
+                let metadata = ObjectMetadata {
+                    size: contents.len() as u64,
+                };
+                self.pending_objects
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("S3 pending-object lock is poisoned"))?
+                    .objects
+                    .insert(key.to_string(), metadata);
+                self.object_cache
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("S3 object cache lock is poisoned"))?
+                    .get_or_insert_with(HashMap::new)
+                    .insert(key.to_string(), metadata);
+                return Ok(());
+            }
+        }
         let mut temporary =
             NamedTempFile::new().context("failed to create temporary S3 upload file")?;
         temporary.write_all(contents)?;
@@ -376,6 +428,66 @@ impl S3Storage {
             command.arg("--endpoint-url").arg(endpoint_url);
         }
         command
+    }
+
+    fn configure_object_staging(&self, path: &Path) -> Result<()> {
+        create_private_directory(path)?;
+        let mut pending = self
+            .pending_objects
+            .lock()
+            .map_err(|_| anyhow::anyhow!("S3 pending-object lock is poisoned"))?;
+        if !pending.objects.is_empty() {
+            bail!("cannot replace S3 staging while objects are pending");
+        }
+        pending.root = Some(path.to_path_buf());
+        Ok(())
+    }
+
+    fn flush_pending_objects(&self) -> Result<()> {
+        let mut pending = self
+            .pending_objects
+            .lock()
+            .map_err(|_| anyhow::anyhow!("S3 pending-object lock is poisoned"))?;
+        if pending.objects.is_empty() {
+            return Ok(());
+        }
+        let root = pending
+            .root
+            .clone()
+            .context("S3 object staging is not configured")?;
+        let source = root.join("objects");
+        let destination = format!("s3://{}/{}/objects/", self.bucket, self.prefix);
+        let mut command = self.command();
+        command
+            .args(["s3", "cp"])
+            .arg(&source)
+            .arg(&destination)
+            .args(["--recursive", "--only-show-errors"]);
+        run(&mut command, "upload staged S3 object batch")?;
+
+        let remote = self.list_object_metadata()?;
+        for (key, expected_metadata) in &pending.objects {
+            let actual = remote
+                .get(key)
+                .with_context(|| format!("uploaded S3 object is missing: {}", self.uri(key)))?;
+            if actual != expected_metadata {
+                bail!(
+                    "uploaded S3 object has size {}, expected {}: {}",
+                    actual.size,
+                    expected_metadata.size,
+                    self.uri(key)
+                );
+            }
+        }
+        fs::remove_dir_all(&root)
+            .with_context(|| format!("failed to clear S3 staging {}", root.display()))?;
+        create_private_directory(&root)?;
+        *self
+            .object_cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("S3 object cache lock is poisoned"))? = Some(remote);
+        pending.objects.clear();
+        Ok(())
     }
 
     fn full_key(&self, key: &str) -> String {

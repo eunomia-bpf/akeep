@@ -14,6 +14,8 @@ pub const CONFIG_FORMAT_VERSION: u32 = 1;
 pub const DEFAULT_CHUNK_SIZE: u64 = 4 * 1024 * 1024;
 pub const MAX_CHUNK_SIZE: u64 = 64 * 1024 * 1024;
 pub const DEFAULT_COMPRESSION_LEVEL: i32 = 3;
+pub const DEFAULT_ARCHIVE_WORKERS: usize = 4;
+pub const MAX_ARCHIVE_WORKERS: usize = 64;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
@@ -78,6 +80,8 @@ pub enum TargetConfig {
 pub struct ArchiveConfig {
     pub chunk_size: u64,
     pub compression_level: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workers: Option<usize>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -136,6 +140,13 @@ impl Config {
         }
         if !(-7..=22).contains(&self.archive.compression_level) {
             bail!("archive.compression_level must be between -7 and 22");
+        }
+        if self
+            .archive
+            .workers
+            .is_some_and(|workers| workers == 0 || workers > MAX_ARCHIVE_WORKERS)
+        {
+            bail!("archive.workers must be between 1 and {MAX_ARCHIVE_WORKERS} when configured");
         }
         if self.vault.state_path.as_os_str().is_empty() {
             bail!("vault.state_path must not be empty");
@@ -292,6 +303,7 @@ pub fn initialize(
         archive: ArchiveConfig {
             chunk_size: DEFAULT_CHUNK_SIZE,
             compression_level: DEFAULT_COMPRESSION_LEVEL,
+            workers: None,
         },
         encryption,
         sources: SourceOverrides::default(),
@@ -409,6 +421,13 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_archive_workers() {
+        let mut config = sample_config();
+        config.archive.workers = Some(0);
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
     fn round_trips_toml() {
         let config = sample_config();
         let encoded = toml::to_string_pretty(&config).unwrap();
@@ -430,6 +449,7 @@ mod tests {
             archive: ArchiveConfig {
                 chunk_size: DEFAULT_CHUNK_SIZE,
                 compression_level: DEFAULT_COMPRESSION_LEVEL,
+                workers: None,
             },
             encryption: EncryptionConfig {
                 mode: EncryptionMode::None,

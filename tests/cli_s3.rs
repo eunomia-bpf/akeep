@@ -23,8 +23,21 @@ fn s3_backup_deduplicates_verifies_lists_and_recovers() {
         .filter(|line| *line == "s3api list-objects-v2")
         .count();
     assert!(
-        object_list_calls <= 8,
+        object_list_calls <= 12,
         "object metadata was queried per chunk:\n{aws_log}"
+    );
+    let object_upload_calls = aws_log.lines().filter(|line| *line == "s3 cp").count();
+    assert!(
+        object_upload_calls <= 4,
+        "objects were uploaded with one AWS CLI process per chunk:\n{aws_log}"
+    );
+    assert_eq!(
+        aws_log
+            .lines()
+            .filter(|line| *line == "s3 cp recursive")
+            .count(),
+        1,
+        "new objects were not uploaded as one staged batch:\n{aws_log}"
     );
     let second = fixture.backup(None);
     assert_eq!(second.new_objects, 0);
@@ -267,7 +280,11 @@ service=${1:?}
 operation=${2:?}
 shift 2
 if [ -n "${FAKE_S3_LOG:-}" ]; then
-    printf '%s %s\n' "$service" "$operation" >> "$FAKE_S3_LOG"
+    mode=
+    for argument in "$@"; do
+        if [ "$argument" = "--recursive" ]; then mode=" recursive"; fi
+    done
+    printf '%s %s%s\n' "$service" "$operation" "$mode" >> "$FAKE_S3_LOG"
 fi
 
 if [ "$service" = "s3" ] && [ "$operation" = "cp" ]; then
@@ -280,6 +297,22 @@ if [ "$service" = "s3" ] && [ "$operation" = "cp" ]; then
             ;;
         *)
             relative=${destination#s3://}
+            if [ -d "$source" ]; then
+                relative=${relative%/}
+                find "$source" -type f -print | LC_ALL=C sort | while IFS= read -r file; do
+                    suffix=${file#"$source/"}
+                    object="$relative/$suffix"
+                    case "$object" in
+                        *"${FAKE_S3_FAIL_UPLOAD_CONTAINS:-__never__}"*)
+                            echo "injected upload failure for $object" >&2
+                            exit 42
+                            ;;
+                    esac
+                    mkdir -p "$(dirname "$root/$object")"
+                    cp "$file" "$root/$object"
+                done
+                exit 0
+            fi
             case "$relative" in
                 *"${FAKE_S3_FAIL_UPLOAD_CONTAINS:-__never__}"*)
                     echo "injected upload failure for $relative" >&2

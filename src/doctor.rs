@@ -6,11 +6,15 @@ use walkdir::WalkDir;
 
 use crate::config::{Config, TargetConfig};
 use crate::crypto::CryptoContext;
-use crate::providers::{Provider, ProviderSpec, SourceItem, specifications};
+use crate::providers::{Provider, ProviderSpec, SourceItem, SourceKind, specifications};
+use crate::resources::{
+    RESOURCE_RESERVE_BYTES, S3_UPLOAD_BATCH_BYTES, archive_workers, available_disk_bytes,
+    available_memory_bytes, cpu_threads, estimated_peak_memory_bytes,
+};
 use crate::scheduler;
 use crate::storage::Storage;
 
-pub const DOCTOR_REPORT_VERSION: u32 = 2;
+pub const DOCTOR_REPORT_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DoctorReport {
@@ -21,9 +25,21 @@ pub struct DoctorReport {
     pub storage_versioning: Option<String>,
     pub scheduler_installed: Option<bool>,
     pub encryption_mode: String,
+    pub resources: ResourceReport,
     pub providers: Vec<ProviderInventory>,
     pub warnings: Vec<String>,
     pub errors: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ResourceReport {
+    pub cpu_threads: u64,
+    pub archive_workers: u64,
+    pub estimated_peak_memory_bytes: u64,
+    pub available_memory_bytes: Option<u64>,
+    pub staging_required_bytes: u64,
+    pub staging_available_bytes: Option<u64>,
+    pub target_available_bytes: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -46,6 +62,7 @@ pub struct ItemInventory {
     pub exists: bool,
     pub file_count: u64,
     pub logical_bytes: u64,
+    pub largest_file_bytes: u64,
     pub skipped_symlinks: u64,
     pub errors: Vec<String>,
 }
@@ -168,6 +185,108 @@ pub fn inspect(config_path: &Path, config: &Config) -> DoctorReport {
         );
     }
 
+    let logical_bytes = providers
+        .iter()
+        .map(|provider| provider.logical_bytes)
+        .sum();
+    let largest_file_bytes = providers
+        .iter()
+        .flat_map(|provider| &provider.items)
+        .map(|item| item.largest_file_bytes)
+        .max()
+        .unwrap_or(0);
+    let snapshot_staging_bytes = specs
+        .iter()
+        .zip(&providers)
+        .flat_map(|(spec, provider)| spec.items.iter().zip(&provider.items))
+        .filter(|(item, _)| {
+            matches!(
+                item.kind,
+                SourceKind::SnapshotDirectory | SourceKind::Sqlite
+            )
+        })
+        .map(|(_, inventory)| inventory.logical_bytes)
+        .sum::<u64>();
+    let upload_staging_bytes = matches!(config.target, TargetConfig::S3 { .. })
+        .then_some(S3_UPLOAD_BATCH_BYTES.max(largest_file_bytes))
+        .unwrap_or(0);
+    let staging_required_bytes = snapshot_staging_bytes
+        .saturating_add(upload_staging_bytes)
+        .saturating_add(RESOURCE_RESERVE_BYTES);
+    let staging_available_bytes = match available_disk_bytes(&config.vault.state_path) {
+        Ok(available) => {
+            if available < staging_required_bytes {
+                errors.push(format!(
+                    "vault staging has {} available but needs at least {} for snapshots, bounded uploads, and safety reserve",
+                    human_bytes(available),
+                    human_bytes(staging_required_bytes)
+                ));
+            }
+            Some(available)
+        }
+        Err(error) => {
+            errors.push(format!("could not inspect vault staging space: {error:#}"));
+            None
+        }
+    };
+    let target_available_bytes = if let TargetConfig::Filesystem { path } = &config.target {
+        match available_disk_bytes(path) {
+            Ok(available) => {
+                if available < RESOURCE_RESERVE_BYTES {
+                    errors.push(format!(
+                        "filesystem target has only {} available; keep at least {} free",
+                        human_bytes(available),
+                        human_bytes(RESOURCE_RESERVE_BYTES)
+                    ));
+                } else if available < logical_bytes {
+                    warnings.push(format!(
+                        "filesystem target has {} available for {} of logical input; incompressible first commits may exhaust it",
+                        human_bytes(available),
+                        human_bytes(logical_bytes)
+                    ));
+                }
+                Some(available)
+            }
+            Err(error) => {
+                errors.push(format!("could not inspect target free space: {error:#}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let estimated_peak_memory_bytes = estimated_peak_memory_bytes(config);
+    let available_memory_bytes = available_memory_bytes();
+    if available_memory_bytes.is_some_and(|available| {
+        available < estimated_peak_memory_bytes.saturating_add(RESOURCE_RESERVE_BYTES)
+    }) {
+        errors.push(format!(
+            "only {} memory is available; the configured archive plan needs about {} plus a {} safety reserve",
+            human_bytes(available_memory_bytes.unwrap_or_default()),
+            human_bytes(estimated_peak_memory_bytes),
+            human_bytes(RESOURCE_RESERVE_BYTES)
+        ));
+    }
+    if config
+        .archive
+        .workers
+        .is_some_and(|workers| workers > cpu_threads())
+    {
+        warnings.push(format!(
+            "archive.workers exceeds the {} available CPU threads and will be capped",
+            cpu_threads()
+        ));
+    }
+    let resources = ResourceReport {
+        cpu_threads: cpu_threads() as u64,
+        archive_workers: archive_workers(config) as u64,
+        estimated_peak_memory_bytes,
+        available_memory_bytes,
+        staging_required_bytes,
+        staging_available_bytes,
+        target_available_bytes,
+    };
+
     DoctorReport {
         report_version: DOCTOR_REPORT_VERSION,
         healthy: errors.is_empty(),
@@ -176,6 +295,7 @@ pub fn inspect(config_path: &Path, config: &Config) -> DoctorReport {
         storage_versioning,
         scheduler_installed,
         encryption_mode: config.encryption.mode.to_string(),
+        resources,
         providers,
         warnings,
         errors,
@@ -200,6 +320,22 @@ pub fn print_human(report: &DoctorReport) {
         );
     }
     println!("Encryption: {}", report.encryption_mode);
+    println!(
+        "Resources: {} worker(s) / {} CPU threads, estimated peak memory {}",
+        report.resources.archive_workers,
+        report.resources.cpu_threads,
+        human_bytes(report.resources.estimated_peak_memory_bytes)
+    );
+    if let Some(available) = report.resources.available_memory_bytes {
+        println!("Available memory: {}", human_bytes(available));
+    }
+    if let Some(available) = report.resources.staging_available_bytes {
+        println!(
+            "Staging space: {} available / {} required",
+            human_bytes(available),
+            human_bytes(report.resources.staging_required_bytes)
+        );
+    }
     println!("Providers:");
     for provider in &report.providers {
         let status = if provider.present {
@@ -257,6 +393,7 @@ fn inventory_item(item: &SourceItem) -> ItemInventory {
             exists: false,
             file_count: 0,
             logical_bytes: 0,
+            largest_file_bytes: 0,
             skipped_symlinks: 0,
             errors: Vec::new(),
         };
@@ -269,6 +406,7 @@ fn inventory_item(item: &SourceItem) -> ItemInventory {
             exists: true,
             file_count: 0,
             logical_bytes: 0,
+            largest_file_bytes: 0,
             skipped_symlinks: 1,
             errors: vec!["top-level source is a symlink; refusing to follow it".to_string()],
         },
@@ -278,6 +416,7 @@ fn inventory_item(item: &SourceItem) -> ItemInventory {
             exists: true,
             file_count: 1,
             logical_bytes: metadata.len(),
+            largest_file_bytes: metadata.len(),
             skipped_symlinks: 0,
             errors: Vec::new(),
         },
@@ -288,6 +427,7 @@ fn inventory_item(item: &SourceItem) -> ItemInventory {
             exists: true,
             file_count: 0,
             logical_bytes: 0,
+            largest_file_bytes: 0,
             skipped_symlinks: 0,
             errors: vec!["source is neither a regular file nor a directory".to_string()],
         },
@@ -297,6 +437,7 @@ fn inventory_item(item: &SourceItem) -> ItemInventory {
             exists: true,
             file_count: 0,
             logical_bytes: 0,
+            largest_file_bytes: 0,
             skipped_symlinks: 0,
             errors: vec![format!("could not inspect source: {error}")],
         },
@@ -307,6 +448,7 @@ fn inventory_directory(item: &SourceItem) -> ItemInventory {
     let mut file_count = 0;
     let mut logical_bytes = 0;
     let mut skipped_symlinks = 0;
+    let mut largest_file_bytes = 0;
     let mut errors = Vec::new();
 
     for entry in WalkDir::new(&item.source_path).follow_links(false) {
@@ -315,6 +457,7 @@ fn inventory_directory(item: &SourceItem) -> ItemInventory {
                 Ok(metadata) => {
                     file_count += 1;
                     logical_bytes += metadata.len();
+                    largest_file_bytes = largest_file_bytes.max(metadata.len());
                 }
                 Err(error) => errors.push(format!("{}: {error}", entry.path().display())),
             },
@@ -332,6 +475,7 @@ fn inventory_directory(item: &SourceItem) -> ItemInventory {
         exists: true,
         file_count,
         logical_bytes,
+        largest_file_bytes,
         skipped_symlinks,
         errors,
     }
@@ -476,6 +620,7 @@ mod tests {
             archive: ArchiveConfig {
                 chunk_size: 1024,
                 compression_level: 3,
+                workers: None,
             },
             encryption: EncryptionConfig {
                 mode: EncryptionMode::None,

@@ -108,6 +108,14 @@ impl Vault {
             .context("failed to create private commit staging directory")
     }
 
+    pub fn configure_object_staging(&self, path: &Path) -> Result<()> {
+        self.storage.configure_object_staging(path)
+    }
+
+    pub fn flush_pending_objects(&self) -> Result<()> {
+        self.storage.flush_pending_objects()
+    }
+
     pub fn store_chunk(&self, raw: &[u8], compression_level: i32) -> Result<StoredChunk> {
         let id = blake3::hash(raw).to_hex().to_string();
         let key = self.object_key(&id)?;
@@ -597,6 +605,7 @@ mod tests {
             archive: ArchiveConfig {
                 chunk_size: 4,
                 compression_level: 3,
+                workers: None,
             },
             encryption: EncryptionConfig {
                 mode: EncryptionMode::None,

@@ -7,6 +7,7 @@ pub mod export;
 pub mod handoff;
 pub mod manifest;
 pub mod providers;
+pub mod resources;
 pub mod scheduler;
 pub mod search;
 pub mod source;

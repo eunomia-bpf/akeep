@@ -17,14 +17,14 @@ use crate::manifest::{
     SnapshotStats, validate_commit_message, validate_logical_path,
 };
 use crate::providers::Provider;
+use crate::resources::{ARCHIVE_CHUNKS_PER_FILE_BATCH, S3_UPLOAD_BATCH_BYTES, archive_pool};
 use crate::source::{PreparedFile, prepare_files};
 use crate::vault::Vault;
 
-const MAX_FILE_BATCH_CHUNKS: usize = 4;
+const MAX_ARCHIVE_FILES_PER_BATCH: usize = 1024;
 
 struct ArchivedFile {
     record: FileRecord,
-    unique_objects: HashSet<String>,
     new_objects: HashMap<String, u64>,
 }
 
@@ -168,6 +168,7 @@ pub fn backup(config_path: &Path, config: &Config, message: Option<&str>) -> Res
     let _lock = vault.acquire_write_lock()?;
     let parent = vault.latest_snapshot_id()?;
     let staging = vault.commit_staging_directory()?;
+    vault.configure_object_staging(&staging.path().join("upload"))?;
     let prepared = prepare_files(config, staging.path())?;
     if prepared.is_empty() {
         bail!("no provider files were discovered; refusing to publish an empty commit");
@@ -179,31 +180,46 @@ pub fn backup(config_path: &Path, config: &Config, message: Option<&str>) -> Res
         created_at.format("%Y%m%dT%H%M%S%.3fZ"),
         &uuid::Uuid::new_v4().simple().to_string()[..8]
     );
-    let archived = prepared
-        .par_iter()
-        .map(|prepared_file| {
-            archive_file(
-                &vault,
-                config.archive.chunk_size as usize,
-                config.archive.compression_level,
-                prepared_file,
-            )
-        })
-        .collect::<Result<Vec<_>>>()?;
-    let mut files = Vec::with_capacity(archived.len());
+    let pool = archive_pool(config)?;
+    let mut files = Vec::with_capacity(prepared.len());
     let mut unique_objects = HashSet::new();
     let mut new_objects = HashSet::new();
     let mut new_stored_bytes = 0_u64;
-    for archived_file in archived {
-        unique_objects.extend(archived_file.unique_objects);
-        for (id, stored_size) in archived_file.new_objects {
-            if new_objects.insert(id) {
-                new_stored_bytes = new_stored_bytes
-                    .checked_add(stored_size)
-                    .context("stored byte count overflow")?;
+    let mut batch_start = 0;
+    while batch_start < prepared.len() {
+        let batch_end = archive_batch_end(&prepared, batch_start);
+        let archived = pool.install(|| {
+            prepared[batch_start..batch_end]
+                .par_iter()
+                .map(|prepared_file| {
+                    archive_file(
+                        &vault,
+                        config.archive.chunk_size as usize,
+                        config.archive.compression_level,
+                        prepared_file,
+                    )
+                })
+                .collect::<Result<Vec<_>>>()
+        })?;
+        vault.flush_pending_objects()?;
+        for archived_file in archived {
+            unique_objects.extend(
+                archived_file
+                    .record
+                    .chunks
+                    .iter()
+                    .map(|chunk| chunk.id.clone()),
+            );
+            for (id, stored_size) in archived_file.new_objects {
+                if new_objects.insert(id) {
+                    new_stored_bytes = new_stored_bytes
+                        .checked_add(stored_size)
+                        .context("stored byte count overflow")?;
+                }
             }
+            files.push(archived_file.record);
         }
-        files.push(archived_file.record);
+        batch_start = batch_end;
     }
 
     let logical_bytes = files.iter().map(|file| file.size).sum();
@@ -314,11 +330,13 @@ pub fn verify(config: &Config, reference: &str, full: bool) -> Result<VerifyRepo
     manifest.validate(config.vault.id)?;
 
     if full {
-        manifest
-            .files
-            .par_iter()
-            .map(|file| verify_file(&vault, file))
-            .collect::<Result<Vec<_>>>()?;
+        archive_pool(config)?.install(|| {
+            manifest
+                .files
+                .par_iter()
+                .map(|file| verify_file(&vault, file))
+                .collect::<Result<Vec<_>>>()
+        })?;
         vault.record_full_verification(&manifest.snapshot_id)?;
     } else {
         verify_object_presence(&vault, &manifest)?;
@@ -369,7 +387,8 @@ pub fn recover(
 
     let marker = target.join(".akeep-recovery-incomplete");
     create_private_new_file(&marker)?;
-    let recovery_result = recover_files(&vault, &selected, target);
+    let recovery_result =
+        archive_pool(config)?.install(|| recover_files(&vault, &selected, target));
     if recovery_result.is_ok() {
         fs::remove_file(&marker)
             .with_context(|| format!("failed to remove recovery marker {}", marker.display()))?;
@@ -576,14 +595,13 @@ fn archive_file(
     let mut reader = BufReader::new(file);
     let mut file_hasher = blake3::Hasher::new();
     let mut chunks = Vec::new();
-    let mut unique_objects = HashSet::new();
     let mut new_objects = HashMap::new();
     let mut size = 0_u64;
     let mut buffer = vec![0_u8; chunk_size];
     let batch_chunks = std::thread::available_parallelism()
         .map(std::num::NonZeroUsize::get)
         .unwrap_or(4)
-        .clamp(1, MAX_FILE_BATCH_CHUNKS);
+        .clamp(1, ARCHIVE_CHUNKS_PER_FILE_BATCH);
 
     loop {
         let mut batch = Vec::with_capacity(batch_chunks);
@@ -632,7 +650,6 @@ fn archive_file(
                 .get(&first_index)
                 .context("internal stored chunk result is missing")?
                 .clone();
-            unique_objects.insert(stored.id.clone());
             if stored.is_new {
                 new_objects
                     .entry(stored.id.clone())
@@ -658,9 +675,22 @@ fn archive_file(
             unix_mode: prepared.unix_mode,
             chunks,
         },
-        unique_objects,
         new_objects,
     })
+}
+
+fn archive_batch_end(prepared: &[PreparedFile], start: usize) -> usize {
+    let mut end = start;
+    let mut bytes = 0_u64;
+    while end < prepared.len() && end - start < MAX_ARCHIVE_FILES_PER_BATCH {
+        let next = prepared[end].size_hint;
+        if end > start && bytes.saturating_add(next) > S3_UPLOAD_BATCH_BYTES {
+            break;
+        }
+        bytes = bytes.saturating_add(next);
+        end += 1;
+    }
+    end.max(start + 1)
 }
 
 fn read_full_chunk(reader: &mut impl Read, buffer: &mut [u8]) -> Result<usize> {
@@ -718,7 +748,7 @@ fn verify_file(vault: &Vault, file: &FileRecord) -> Result<()> {
     validate_logical_path(&file.logical_path)?;
     let mut file_hasher = blake3::Hasher::new();
     let mut file_size = 0_u64;
-    for chunk_batch in file.chunks.chunks(MAX_FILE_BATCH_CHUNKS) {
+    for chunk_batch in file.chunks.chunks(ARCHIVE_CHUNKS_PER_FILE_BATCH) {
         for raw in read_verified_chunks(vault, chunk_batch)? {
             file_hasher.update(&raw);
             file_size += raw.len() as u64;
@@ -867,7 +897,7 @@ fn recover_file(vault: &Vault, record: &FileRecord, target: &Path) -> Result<()>
     let mut file = create_private_new_file(&output)?;
     let mut file_hasher = blake3::Hasher::new();
     let mut file_size = 0_u64;
-    for chunk_batch in record.chunks.chunks(MAX_FILE_BATCH_CHUNKS) {
+    for chunk_batch in record.chunks.chunks(ARCHIVE_CHUNKS_PER_FILE_BATCH) {
         for raw in read_verified_chunks(vault, chunk_batch)? {
             file.write_all(&raw)
                 .with_context(|| format!("failed to recover {}", output.display()))?;

@@ -431,6 +431,7 @@ mod tests {
             archive: ArchiveConfig {
                 chunk_size: 1024,
                 compression_level: 3,
+                workers: None,
             },
             encryption: EncryptionConfig {
                 mode: EncryptionMode::None,

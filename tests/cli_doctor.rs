@@ -45,6 +45,8 @@ fn doctor_reports_discovered_providers_as_json() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"healthy\": true"))
+        .stdout(predicate::str::contains("\"archive_workers\": 4"))
+        .stdout(predicate::str::contains("\"staging_available_bytes\""))
         .stdout(predicate::str::contains("\"provider\": \"claude-code\""))
         .stdout(predicate::str::contains("\"file_count\": 1"));
 }

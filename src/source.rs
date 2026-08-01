@@ -16,6 +16,7 @@ pub struct PreparedFile {
     pub provider: Provider,
     pub read_path: PathBuf,
     pub logical_path: String,
+    pub size_hint: u64,
     pub kind: ArchivedFileKind,
     pub modified_unix_seconds: Option<i64>,
     pub modified_subsec_nanos: Option<u32>,
@@ -202,6 +203,7 @@ fn prepared_regular(
         provider,
         read_path,
         logical_path,
+        size_hint: metadata.len(),
         kind,
         modified_unix_seconds,
         modified_subsec_nanos,
@@ -485,6 +487,7 @@ mod tests {
             archive: ArchiveConfig {
                 chunk_size: 4,
                 compression_level: 3,
+                workers: None,
             },
             encryption: EncryptionConfig {
                 mode: EncryptionMode::None,
