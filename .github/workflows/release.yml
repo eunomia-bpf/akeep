@@ -1,11 +1,24 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      sha:
+        required: true
+        type: string
+    secrets:
+      CARGO_REGISTRY_TOKEN:
+        required: true
 
 permissions:
   contents: read
+
+concurrency:
+  group: akeep-release
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -29,26 +42,35 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.target }}
-      - name: Check tag version
+      - name: Check release source
         shell: bash
+        env:
+          RELEASE_SHA: ${{ inputs.sha }}
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
+          set -euo pipefail
           version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
-          test "$GITHUB_REF_NAME" = "v$version"
+          test "$RELEASE_VERSION" = "$version"
+          test "$RELEASE_SHA" = "$(git rev-parse HEAD)"
       - name: Test
         run: cargo test --all-targets --locked
       - name: Build release binary
         run: cargo build --release --locked --target "${{ matrix.target }}"
       - name: Package binary
         shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          archive="akeep-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz"
+          archive="akeep-v${RELEASE_VERSION}-${{ matrix.target }}.tar.gz"
           mkdir -p dist/package
           cp "target/${{ matrix.target }}/release/akeep" README.md CHANGELOG.md LICENSE dist/package/
           "dist/package/akeep" --version
@@ -63,14 +85,44 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
 
-  publish:
-    name: Publish GitHub prerelease
+  publish-crate:
+    name: Publish crate
     needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish version if absent
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H 'User-Agent: akeep-release (https://github.com/eunomia-bpf/akeep)' \
+            "https://crates.io/api/v1/crates/akeep/${RELEASE_VERSION}")"
+          if [ "$status" = 404 ]; then
+            cargo publish --locked --no-verify
+          elif [ "$status" != 200 ]; then
+            echo "unexpected crates.io status: $status" >&2
+            exit 1
+          fi
+
+  publish:
+    name: Publish GitHub release
+    needs: [build, publish-crate]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -80,16 +132,30 @@ jobs:
           cp scripts/install.sh dist/install.sh
           cd dist
           sha256sum *.tar.gz install.sh > SHA256SUMS
-      - name: Create GitHub prerelease
+      - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ inputs.sha }}
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "Akeep ${GITHUB_REF_NAME}" \
-            --generate-notes \
-            --prerelease \
-            dist/*
+          set -euo pipefail
+          tag="v${RELEASE_VERSION}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "GitHub release already exists: $tag"
+          else
+            flags=()
+            case "$RELEASE_VERSION" in
+              *-*) flags+=(--prerelease) ;;
+              *) flags+=(--latest) ;;
+            esac
+            gh release create "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$RELEASE_SHA" \
+              --title "Akeep ${tag}" \
+              --generate-notes \
+              "${flags[@]}" \
+              dist/*
+          fi
 
   release-smoke:
     name: Release smoke (${{ matrix.target }})
@@ -111,13 +177,15 @@ jobs:
       - name: Download and verify public release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ inputs.version }}
         shell: bash
         run: |
           set -euo pipefail
+          tag="v${RELEASE_VERSION}"
           mkdir release
-          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir release
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir release
           cd release
-          archive="akeep-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz"
+          archive="akeep-${tag}-${{ matrix.target }}.tar.gz"
           expected="$(awk -v archive="$archive" '$2 == archive { print $1 }' SHA256SUMS)"
           if command -v sha256sum >/dev/null 2>&1; then
             actual="$(sha256sum "$archive" | awk '{print $1}')"
@@ -126,7 +194,20 @@ jobs:
           fi
           test -n "$expected" && test "$actual" = "$expected"
           tar -xzf "$archive"
-          ./akeep --version
+          test "$(./akeep --version)" = "akeep $RELEASE_VERSION"
+      - name: Exercise public installer
+        env:
+          AKEEP_INSTALL_DIR: ${{ runner.temp }}/akeep-public-install
+          RELEASE_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RELEASE_VERSION" == *-* ]]; then
+            sh release/install.sh "v${RELEASE_VERSION}"
+          else
+            sh release/install.sh
+          fi
+          test "$("$AKEEP_INSTALL_DIR/akeep" --version)" = "akeep $RELEASE_VERSION"
       - name: Exercise installed binary
         shell: bash
         run: |
@@ -146,15 +227,21 @@ jobs:
     steps:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install from crates.io
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
         shell: bash
         run: |
           set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
           for attempt in 1 2 3 4 5; do
-            if cargo install akeep --version "$version" --locked --root "$RUNNER_TEMP/akeep-registry"; then
+            args=()
+            case "$RELEASE_VERSION" in
+              *-*) args+=(--version "$RELEASE_VERSION") ;;
+            esac
+            if cargo install akeep "${args[@]}" --locked --root "$RUNNER_TEMP/akeep-registry"; then
               break
             fi
             if [ "$attempt" -eq 5 ]; then exit 1; fi
             sleep 30
           done
-          "$RUNNER_TEMP/akeep-registry/bin/akeep" --version
+          installed="$("$RUNNER_TEMP/akeep-registry/bin/akeep" --version)"
+          test "$installed" = "akeep $RELEASE_VERSION"

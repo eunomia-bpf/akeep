@@ -5,6 +5,8 @@ use assert_cmd::Command;
 use predicates::prelude::*;
 use tempfile::TempDir;
 
+const S3_COMPATIBLE_ENDPOINT: &str = "https://example.r2.cloudflarestorage.com";
+
 #[test]
 fn s3_backup_deduplicates_verifies_lists_and_recovers() {
     let fixture = S3Fixture::new();
@@ -201,6 +203,7 @@ impl S3Fixture {
             .unwrap()
             .env("FAKE_S3_ROOT", &cloud)
             .env("FAKE_S3_LOG", &aws_log)
+            .env("FAKE_S3_EXPECT_ENDPOINT", S3_COMPATIBLE_ENDPOINT)
             .env("XDG_STATE_HOME", &state_home)
             .args([
                 "--config",
@@ -210,6 +213,8 @@ impl S3Fixture {
                 "test-bucket",
                 "--s3-prefix",
                 "akeep",
+                "--s3-endpoint-url",
+                S3_COMPATIBLE_ENDPOINT,
                 "--aws-cli",
                 aws.to_str().unwrap(),
             ])
@@ -242,6 +247,7 @@ impl S3Fixture {
         command
             .env("FAKE_S3_ROOT", &self.cloud)
             .env("FAKE_S3_LOG", &self.aws_log)
+            .env("FAKE_S3_EXPECT_ENDPOINT", S3_COMPATIBLE_ENDPOINT)
             .env("XDG_STATE_HOME", &self.state_home)
             .args(["--config", self.config.to_str().unwrap()]);
         command
@@ -269,12 +275,18 @@ fn write_fake_aws(path: &Path) {
 set -eu
 
 root=${FAKE_S3_ROOT:?}
+endpoint=
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --profile|--region|--endpoint-url) shift 2 ;;
+        --profile|--region) shift 2 ;;
+        --endpoint-url) endpoint=$2; shift 2 ;;
         *) break ;;
     esac
 done
+if [ "$endpoint" != "${FAKE_S3_EXPECT_ENDPOINT:-}" ]; then
+    echo "unexpected S3-compatible endpoint: $endpoint" >&2
+    exit 2
+fi
 
 service=${1:?}
 operation=${2:?}

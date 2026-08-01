@@ -35,6 +35,19 @@ scheduled jobs do not depend on an interactive shell's `PATH`. Use
 `--aws-cli /absolute/path/to/aws` to choose it explicitly and
 `--s3-endpoint-url URL` for a compatible service.
 
+[Cloudflare R2](https://developers.cloudflare.com/r2/api/s3/api/) is available
+through its S3-compatible endpoint. Configure an AWS CLI profile with the R2
+access key, secret, and region `auto`, then run:
+
+```console
+akeep init \
+  --s3-bucket my-r2-bucket \
+  --s3-prefix akeep/my-machine \
+  --aws-profile r2 \
+  --s3-endpoint-url https://ACCOUNT_ID.r2.cloudflarestorage.com \
+  --encryption age
+```
+
 Every vault needs its own prefix. Akeep never deletes remote objects. Bucket
 versioning is recommended because `refs/latest` is intentionally updated after
 each complete manifest; `akeep status` reports the versioning state when the

@@ -1,8 +1,9 @@
 # Releasing Akeep
 
-Releases are irreversible registry and GitHub operations. Start from a clean,
-green `main`, confirm `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`, README install
-commands, and the proposed `v<package-version>` tag agree.
+Releases are irreversible registry and GitHub operations. A successful `main`
+CI run compares the version in `Cargo.toml` with crates.io and GitHub Releases.
+When that version has not been published, CI publishes it automatically and
+creates the matching `v<package-version>` release.
 
 Run the local release gate:
 
@@ -13,17 +14,14 @@ cargo test --all-targets --locked
 cargo publish --locked --dry-run
 ```
 
-The first crates.io publication must use a maintainer token. Publish it before
-the Git tag so the tag workflow's registry install test can observe it:
+Before merging a version bump, confirm `Cargo.toml`, `Cargo.lock`,
+`CHANGELOG.md`, and README install commands agree, then run the local release
+gate above. Do not create the tag or publish manually. The repository secret
+`CARGO_REGISTRY_TOKEN` is available only to the trusted `main` publication job.
 
-```console
-cargo publish --locked
-git tag -a v0.1.0-alpha.1 -m "Akeep v0.1.0-alpha.1"
-git push origin v0.1.0-alpha.1
-```
-
-The tag workflow builds and attests four native archives, creates a GitHub
-prerelease with `SHA256SUMS` and `install.sh`, installs every public binary on
-its matching runner, and installs the exact version from crates.io. A release
-is complete only after those jobs pass and both public install paths are
-smoke-tested outside the source checkout.
+After the ordinary test and MSRV jobs pass, the release workflow builds and
+attests four native archives, publishes the crate if absent, creates a stable
+release or prerelease according to the SemVer suffix, and installs every public
+artifact. If the Cargo version already exists in both public destinations, the
+publication stage is a no-op. A release is complete only after the public
+binary installer and crates.io install smoke tests pass.

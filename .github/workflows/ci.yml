@@ -48,3 +48,58 @@ jobs:
         with:
           key: msrv
       - run: cargo check --all-targets --locked
+
+  release-check:
+    name: Check automatic release
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [test, msrv]
+    runs-on: ubuntu-latest
+    outputs:
+      needed: ${{ steps.release.outputs.needed }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: release
+        name: Compare public versions
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          tag="v${version}"
+          grep -F "## [$version]" CHANGELOG.md >/dev/null
+          crate_status="$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H 'User-Agent: akeep-release-check (https://github.com/eunomia-bpf/akeep)' \
+            "https://crates.io/api/v1/crates/akeep/${version}")"
+          case "$crate_status" in
+            200) crate_exists=true ;;
+            404) crate_exists=false ;;
+            *) echo "unexpected crates.io status: $crate_status" >&2; exit 1 ;;
+          esac
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            release_exists=true
+          else
+            release_exists=false
+          fi
+          if [ "$crate_exists" = true ] && [ "$release_exists" = true ]; then
+            needed=false
+          else
+            needed=true
+          fi
+          echo "needed=$needed" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Automatic release
+    needs: release-check
+    if: needs.release-check.outputs.needed == 'true'
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/release.yml
+    with:
+      version: ${{ needs.release-check.outputs.version }}
+      sha: ${{ github.sha }}
+    secrets: inherit

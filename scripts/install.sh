@@ -1,7 +1,12 @@
 #!/bin/sh
 set -eu
 
-version=${1:-v0.1.0-alpha.1}
+repository=https://github.com/eunomia-bpf/akeep
+version=${1:-}
+if [ -z "$version" ]; then
+    release_url=$(curl -fsSL -o /dev/null -w '%{url_effective}' "$repository/releases/latest")
+    version=${release_url##*/}
+fi
 case "$version" in
     v|*[!0-9A-Za-z.v-]*) echo "invalid Akeep version: $version" >&2; exit 2 ;;
 esac
@@ -14,7 +19,6 @@ case "$(uname -s):$(uname -m)" in
     *) echo "unsupported platform: $(uname -s) $(uname -m)" >&2; exit 2 ;;
 esac
 
-repository=https://github.com/eunomia-bpf/akeep
 archive="akeep-${version}-${target}.tar.gz"
 temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' EXIT HUP INT TERM

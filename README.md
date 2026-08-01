@@ -25,8 +25,8 @@ Akeep is designed around five promises:
 
 - **Versioned:** commits have messages and parent links; `HEAD~N`, `log`, and
   `diff` make history understandable.
-- **User-controlled:** choose where history lives: a local filesystem or an
-  S3-compatible storage target.
+- **Cloud backup:** keep history locally or back it up to AWS S3 and
+  S3-compatible storage such as Cloudflare R2.
 - **Exact:** raw provider files remain the source of truth and are preserved
   byte-for-byte.
 - **Private:** no upload or telemetry happens by default. Client-side
@@ -36,7 +36,14 @@ Akeep is designed around five promises:
 
 ## Install
 
-On Linux or macOS, install the latest published binary with one command:
+Install from crates.io:
+
+```console
+cargo install akeep
+```
+
+On Linux or macOS, you can instead download the latest published binary with
+one command:
 
 ```console
 curl -fsSL https://raw.githubusercontent.com/eunomia-bpf/akeep/main/scripts/install.sh | sh
@@ -47,15 +54,8 @@ The installer detects x86_64/ARM64 and writes to `~/.local/bin` unless
 newest published release. You can also download and verify an archive directly
 from [GitHub Releases](https://github.com/eunomia-bpf/akeep/releases).
 
-Rust users who want the newest code from `main` can install it directly from
-GitHub:
-
-```console
-cargo install --git https://github.com/eunomia-bpf/akeep
-```
-
-Rerun that command with `--force` to replace an existing installation with the
-current `main`. Akeep does not update itself silently.
+Rerun your chosen installation command to update. Akeep does not update itself
+silently.
 
 ## Usage
 
@@ -134,6 +134,19 @@ objects before publishing a manifest, and never issues a remote delete.
 `--s3-endpoint-url` supports S3-compatible services. Remote encryption is
 recommended, not mandatory: omitting `--encryption age` produces a clear
 warning and a fully supported plaintext vault.
+
+[Cloudflare R2](https://developers.cloudflare.com/r2/api/s3/api/) uses the same
+S3-compatible path. Configure an AWS CLI profile with R2 credentials and set
+its account endpoint:
+
+```console
+akeep init \
+  --s3-bucket my-r2-bucket \
+  --s3-prefix akeep/my-machine \
+  --aws-profile r2 \
+  --s3-endpoint-url https://ACCOUNT_ID.r2.cloudflarestorage.com \
+  --encryption age
+```
 
 The Linux scheduler installs one service and timer per vault under the systemd
 user-unit directory. It is persistent across downtime, adds a randomized

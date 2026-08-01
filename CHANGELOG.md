@@ -1,9 +1,31 @@
 # Changelog
 
-All notable changes are documented here. Akeep follows Semantic Versioning once
-the first release is tagged.
+All notable changes are documented here. Akeep follows Semantic Versioning.
 
 ## [Unreleased]
+
+## [0.1.0] - 2026-08-01
+
+### Added
+
+- Stable crates.io installation through `cargo install akeep`.
+- Automatic publication of new Cargo versions after the complete `main` CI
+  suite succeeds.
+- Explicit Cloudflare R2 setup through the S3-compatible endpoint path.
+
+### Changed
+
+- Bounded streaming commits, integrity checks, recovery, and S3 batch uploads
+  reduce the observed real-workload peak from 23.6 GiB to about 243 MiB while
+  preserving the archive format.
+- Product documentation now presents the implemented backup and recovery loop
+  as ready for daily use and keeps optional managed storage open for the future.
+- The unversioned installer resolves the latest stable GitHub Release.
+
+### Removed
+
+- The non-core `index`, `search`, and `export` commands. Backup, recovery,
+  migration, and semantic handoff remain supported.
 
 ## [0.1.0-alpha.1] - 2026-07-31
 
@@ -52,5 +74,6 @@ the first release is tagged.
 - Product positioning now leads with privacy-first version history for agents;
   integrity checks and exact recovery remain core mechanisms.
 
-[Unreleased]: https://github.com/eunomia-bpf/akeep/compare/v0.1.0-alpha.1...HEAD
+[Unreleased]: https://github.com/eunomia-bpf/akeep/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/eunomia-bpf/akeep/compare/v0.1.0-alpha.1...v0.1.0
 [0.1.0-alpha.1]: https://github.com/eunomia-bpf/akeep/releases/tag/v0.1.0-alpha.1
