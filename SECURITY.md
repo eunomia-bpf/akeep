@@ -16,8 +16,8 @@ or recoverability was affected.
 - Network access occurs only for an explicitly configured S3 target.
 - Client-side age encryption is optional. In plaintext mode, filesystem and
   storage administrators can read the archive.
-- The local configuration, generated age identity, search index, exports, and
-  handoff files are sensitive. Unix permissions reduce accidental exposure but
+- The local configuration, generated age identity, and handoff files are
+  sensitive. Unix permissions reduce accidental exposure but
   do not protect a compromised user account.
 - Akeep is not a defense against a malicious root user, compromised provider,
   hostile AWS CLI executable, or an attacker who can rewrite both an
@@ -25,6 +25,6 @@ or recoverability was affected.
 - Losing every copy of an age identity is permanent data loss. Akeep has no
   escrow or recovery service.
 
-The latest `0.1.0-alpha.*` release and `main` receive security fixes. Alpha
-archives remain readable across patch releases unless release notes explicitly
-document a migration.
+The latest published release and `main` receive security fixes. Archives remain
+readable across patch releases unless release notes explicitly document a
+migration.

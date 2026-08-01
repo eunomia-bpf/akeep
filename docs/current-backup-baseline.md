@@ -1,8 +1,8 @@
-# Current dogfood backup baseline
+# Current backup migration baseline
 
 Observed on 2026-07-26. This document defines the minimum operational baseline
 Akeep must meet before it can replace the service already running on the
-dogfood machine.
+primary development machine.
 
 No credentials, bucket names, or transcript contents are recorded here.
 
@@ -28,7 +28,7 @@ there is no client-side encryption.
 
 ## Capability comparison
 
-| Capability | Existing service | Akeep v0.1 requirement |
+| Capability | Existing service | Akeep |
 | --- | --- | --- |
 | Scheduled backup | Weekly persistent systemd timer | Equivalent or better |
 | Concurrency control | Process lock | Per-vault lock |
@@ -38,7 +38,7 @@ there is no client-side encryption.
 | Remote target | AWS S3 only | Local filesystem and S3-compatible |
 | Compression | None | Streaming compression |
 | Client-side encryption | None | Optional vault mode; `none` remains fully supported |
-| Remote deletion | Never | Never in v0.1 |
+| Remote deletion | Never | Never |
 | History | S3 object versions | Immutable commits with messages, parents, `HEAD~N`, `log`, and `diff` |
 | Manifest | Presence booleans and timestamp | Versioned file/object hashes and adapter metadata |
 | Integrity | Bucket reachability | Full manifest/object/content `fsck` |
@@ -82,7 +82,8 @@ standalone integrity-check fixtures.
 5. Perform current and historical recovery drills from Akeep.
 6. Inject corruption into a copied Akeep archive and verify detection.
 7. Disable the old timer only after the gate in
-   [mvp.md](mvp.md#6-replacement-and-dogfood-gate) passes.
+   [reliability.md](reliability.md#6-migration-safety-gate-for-our-existing-backup)
+   passes.
 8. Keep the old remote data as a fallback through at least one more successful
    Akeep restore drill.
 

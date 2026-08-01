@@ -1,8 +1,8 @@
 # Testing and reliability evidence
 
 Akeep counts an integrity-checked restore—not an upload—as success. This page
-separates repeatable software tests from the time-based dogfood replacement
-gate.
+separates repeatable software tests from the time-based migration safety gate
+for our previous backup service.
 
 ## Automated suite
 
@@ -87,20 +87,20 @@ akeep checkout HEAD \
 The filtered drill verifies every selected object and file, but deliberately
 does not record the entire commit as fully checked.
 
-## Dogfood replacement gate
+## Migration safety gate
 
-The public checklist in [the MVP specification](mvp.md) is intentionally
-stricter than CI. It requires three scheduled runs across at least 14 days,
-current and week-old full restores, corruption rejection, and provider-native
-recognition. The pre-existing backup remains enabled until every unchecked item
-passes. Akeep's code can be release-ready before enough wall-clock evidence
-exists to replace that service. The checklist records dated, non-secret
-shadow-run evidence; bucket names, account details, source paths, and session
+The checklist in [the reliability specification](reliability.md) is
+intentionally stricter than CI. It requires three scheduled runs across at
+least 14 days, current and week-old full restores, corruption rejection, and
+provider-native recognition. The previous backup remains enabled until every
+unchecked item passes. This is a conservative migration policy for our own
+installation, not a restriction on using Akeep. The checklist records dated,
+non-secret evidence; bucket names, account details, source paths, and session
 content must never be committed.
 
 ## Performance baseline
 
-The optimized 2026-08-01 real S3 dogfood commit covered 53,259 files and
+The optimized 2026-08-01 real S3 commit covered 53,259 files and
 60,730,326,091 logical bytes. With four workers and staged recursive uploads it
 added 391 objects (165,347,103 stored bytes), used 249,128 KiB peak RSS, 243.7
 CPU seconds, and 236.4 wall-clock seconds. An earlier full run of the old

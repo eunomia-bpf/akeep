@@ -142,9 +142,9 @@ The generated timer uses `Persistent=true`, so a missed run starts after the
 user manager returns. A six-hour randomized delay prevents synchronized
 uploads. The service uses low CPU and idle I/O priority.
 
-Pre-alpha services generated before the Git-like command change invoke
-`backup`. After replacing that binary, run `akeep schedule install --weekly`
-again to atomically regenerate and reactivate the service with `commit`.
+Services generated before the Git-like command change invoke `backup`. After
+replacing that binary, run `akeep schedule install --weekly` again to atomically
+regenerate and reactivate the service with `commit`.
 
 To remove automation without touching data:
 

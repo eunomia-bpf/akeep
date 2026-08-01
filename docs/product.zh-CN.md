@@ -1,15 +1,15 @@
-# Akeep 产品与发布计划
+# Akeep 产品说明
 
-状态：v0.1 已实现，dogfood replacement gate 进行中
+状态：核心备份与恢复流程已经实现，可直接用于本地或 S3-compatible 存储
 
 产品关系：Akeep 是完全独立的产品、代码库和品牌
 
 ## 结论
 
-Akeep 值得做，但不能把自己定义成“又一个 Agent 对话查看器”，也不应把
+Akeep 不是“又一个 Agent 对话查看器”，也不把
 “压缩 JSONL”当成独立品类。
 
-最合适的定位是：
+它的定位是：
 
 > **Akeep — coding-agent 工作记录的本地版本历史。**
 
@@ -25,7 +25,7 @@ init -> status -> commit -> work normally -> commit
                            -> log / diff / fsck / checkout / clone
 ```
 
-第一版最重要的产品体验是“对 Agent 工作流零侵入，但历史真的能取回”：
+最重要的产品体验是“对 Agent 工作流零侵入，但历史真的能取回”：
 
 - 不要求修改 Claude Code、Codex 或其他 Agent；
 - 不要求先 `add`，Provider adapter 自动发现窄而明确的 durable-state allowlist；
@@ -39,11 +39,11 @@ init -> status -> commit -> work normally -> commit
 
 ## 名字：保留 Akeep，不改成 akgit
 
-现在即使刚开始，也不建议改名为 `akgit`：
+不建议改名为 `akgit`：
 
 - `Akeep` 直接表达“替用户保存 Agent work”，可以覆盖本地、S3、未来托管同步；
 - `akgit` 会暗示 Git object/protocol 兼容、working tree、staging、branch、merge、
-  remote 和冲突语义；v0.1 有意不实现这些；
+  remote 和冲突语义；Akeep 有意不实现这些；
 - 用户真正需要的是熟悉的少数动作，不是第二套 Git；
 - `akeep commit/log/diff/checkout/clone` 已经借用了足够的认知，无需把整个品牌
   绑在实现类比上。
@@ -52,15 +52,15 @@ init -> status -> commit -> work normally -> commit
 时，才应重新讨论 `akgit`。当前产品名和二进制都保持 `akeep`。
 
 本轮公开 Web/GitHub 检索没有发现一个在 coding-agent history 类别中占据
-`Akeep` 或 `akgit` 的主导产品；这不是商标许可结论。正式发布前仍应单独检查
-GitHub、crates.io、Homebrew、主要域名和目标销售地区商标。即使 `akgit` 可用，
-上述产品预期问题仍然使 `Akeep` 更合适。
+`Akeep` 或 `akgit` 的主导产品；这不是商标许可结论。进行品牌扩展或商业推广
+时仍应单独检查 GitHub、crates.io、Homebrew、主要域名和目标销售地区商标。
+即使 `akgit` 可用，上述产品预期问题仍然使 `Akeep` 更合适。
 
 ## 我们自己能不能用
 
 能，而且应该先服务我们自己。
 
-初始 dogfood 数据超过 50 GB，已经有一个每周运行、覆盖五个 Agent 的 S3
+我们的真实数据超过 50 GB，原来已有一个每周运行、覆盖五个 Agent 的 S3
 备份服务。这给 Akeep 提供了真实压力测试和清楚的最低功能线：
 
 - 不能少于现有五个 Provider 的原始备份覆盖；
@@ -71,7 +71,7 @@ GitHub、crates.io、Homebrew、主要域名和目标销售地区商标。即使
 
 因此，Akeep 的第一位用户不是一个虚构 persona，而是我们正在使用的机器。
 任何在 50+ GB 数据上成本失控、内存爆炸、恢复过慢或误报成功的设计，都应
-在公开发布前暴露。
+在真实使用中尽早暴露。
 
 首个真实 commit 的数字已经说明压缩是有效机制，但不是唯一卖点：
 55,206,535,333 logical bytes（51.42 GiB）变为 10,690,998,971 stored bytes
@@ -81,7 +81,7 @@ GitHub、crates.io、Homebrew、主要域名和目标销售地区商标。即使
 
 ## 能否不再使用之前的备份项目
 
-可以，但不是现在立刻停。
+可以。迁移备份系统时，先并行运行一段时间再停旧服务：
 
 正确顺序是：
 
@@ -96,11 +96,11 @@ GitHub、crates.io、Homebrew、主要域名和目标销售地区商标。即使
 通过这组 gate 后，Akeep 可以替代现有“Agent history 到 S3”的专用服务。
 它不会替代 Git、系统备份、Provider 原生 resume 或工作区 artifact 备份。
 
-## MVP 范围
+## 核心功能
 
-### v0.1：版本历史 + 现有备份能力等价
+### 版本历史 + 现有备份能力等价
 
-必须具备：
+当前支持：
 
 - Claude Code、Codex、Grok、Kimi Code、OpenCode 原始数据发现；
 - live SQLite 一致性快照；
@@ -113,7 +113,7 @@ GitHub、crates.io、Homebrew、主要域名和目标销售地区商标。即使
 - 默认不改 Provider 文件、不传播删除、不覆盖恢复目标；
 - 人类可读和 JSON 两种报告。
 
-`add` 不进入 v0.1。自动发现比强迫用户维护 staging set 更符合“对现有 Agent
+`add` 不属于核心流程。自动发现比强迫用户维护 staging set 更符合“对现有 Agent
 体验最小改动”的目标。将来若用户需要备份 adapter allowlist 之外的自定义目录，
 可以增加显式 source 配置或可选 `add`，但不能让它成为普通 commit 的前置步骤。
 
@@ -126,9 +126,9 @@ GitHub、crates.io、Homebrew、主要域名和目标销售地区商标。即使
 - 自动清理本机冷 session；
 - 跨 Provider 原生 session 注入。
 
-### 已提前实现的语义交接能力
+### 语义交接能力
 
-以下原计划放到 v0.2 的能力已经提前实现，但仍是 versioned backup 之上的派生层：
+以下能力已经实现，但仍是 versioned backup 之上的派生层：
 
 - Claude ↔ Codex semantic handoff bundle；
 - 当前目标、关键决策、失败方案、文件改动、命令结果、测试状态、Git 状态、
@@ -147,7 +147,7 @@ GitHub、crates.io、Homebrew、主要域名和目标销售地区商标。即使
   OpenCode。
 - **Storage target** 负责保存 opaque objects：本地 filesystem、S3-compatible。
 
-v0.1 不做庞大的插件系统，只保留清晰的内部边界。S3-compatible 已经覆盖
+当前不做庞大的插件系统，只保留清晰的内部边界。S3-compatible 已经覆盖
 AWS S3、R2、MinIO、Backblaze B2 等大量服务；本地 filesystem 又能覆盖外接
 硬盘、NAS mount 和由 Syncthing/rclone 管理的目录。等真实用户要求 WebDAV
 或其他 target 时再新增。
@@ -158,7 +158,7 @@ Provider adapter 不应决定 archive 格式，storage target 也不应看懂 tr
 
 ### “sync” 到底能承诺什么
 
-v0.1 可以诚实承诺：
+Akeep 当前可以承诺：
 
 - commit 直接写入一个用户选择的本地或 S3-compatible repository；
 - `clone` 能把 filesystem 或 S3 repository 精确复制成可独立使用的本地 bundle；
@@ -233,10 +233,10 @@ Akeep 的楔子应该是：
 
 但真正的产品差异不能只写成 `commit/log/diff`。与最接近的 Entire 相比，Akeep
 不依赖每个代码仓库的 Git hook 或用户代码 commit，而是跨项目、跨 Provider
-备份完整的 provider-native durable state；与 stift/Claude Sync 相比，v0.1
+备份完整的 provider-native durable state；与 stift/Claude Sync 相比，Akeep
 不要求账号或 server，支持本地/S3、自选 plaintext/age，并包含 live SQLite
 一致性 snapshot 和完整 scratch checkout。这个差异必须由兼容矩阵、50+ GB
-dogfood、故障注入和真实恢复演练证明，不能只靠命令名字。
+真实大规模备份、故障注入和恢复演练证明，不能只靠命令名字。
 
 需求也不是抽象假设：Claude Code
 [官方 sessions 文档](https://code.claude.com/docs/en/sessions)说明本地 transcript
@@ -247,7 +247,7 @@ dogfood、故障注入和真实恢复演练证明，不能只靠命令名字。
 组合差异是：
 
 > 自动发现的原始状态 + Git-like commit/diff/checkout + 用户可选客户端加密
-> + 压缩去重 + Provider-aware 一致性快照 + 后续 semantic handoff。
+> + 压缩去重 + Provider-aware 一致性快照 + semantic handoff。
 
 ## 宣传方式
 
@@ -270,7 +270,7 @@ dogfood、故障注入和真实恢复演练证明，不能只靠命令名字。
 不要把 “AI history compression tool” 当主定位。用户不会为了压缩 JSONL 安装
 一个高权限工具，但会为了得到不依赖单个 Provider 的版本历史安装它。
 
-### 第一支演示
+### 核心演示
 
 用隔离 fixture 做 90 秒、可复现的恢复演示：
 
@@ -286,7 +286,7 @@ dogfood、故障注入和真实恢复演练证明，不能只靠命令名字。
 
 ### 发布标题
 
-完成真实 dogfood restore 之后：
+可使用的发布标题：
 
 > **Show HN: Akeep – Git-like local version history for coding agents**
 
@@ -297,7 +297,7 @@ dogfood、故障注入和真实恢复演练证明，不能只靠命令名字。
 - “Commit and diff your coding-agent history without changing your agent.”
 - “We corrupted our own Agent archive. Akeep caught it before checkout.”
 
-### 首发渠道
+### 推广渠道
 
 1. GitHub README + 可复现 demo；
 2. Show HN；
@@ -308,7 +308,7 @@ dogfood、故障注入和真实恢复演练证明，不能只靠命令名字。
 
 ### 信任材料
 
-公开发布前至少具备：
+Akeep 公开维护以下材料：
 
 - archive format 文档；
 - threat model；
@@ -333,11 +333,11 @@ dogfood、故障注入和真实恢复演练证明，不能只靠命令名字。
 不要按“存了多少 JSON”作为核心价值收费。真正可付费的是恢复可靠性、密钥管理
 和免维护的连续性服务。
 
-## MVP 的唯一北极星
+## 可靠性的唯一北极星
 
-首发前必须能回答：
+必须能回答：
 
 > 如果这台机器今天损坏，我们是否能只依赖 Akeep，在一台干净机器上恢复出
 > Provider 可识别、哈希一致的历史？
 
-答案不是经过演练的“是”，就还没有 MVP。
+答案不是经过演练的“是”，就不能算可靠备份。

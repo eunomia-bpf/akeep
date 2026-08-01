@@ -4,8 +4,8 @@ Akeep adapter version 1 preserves provider-native files; it does not normalize
 them into a shared conversation schema. Exact recovery recreates the paths
 listed below under a provider directory in the scratch target.
 
-Real multi-provider discovery is exercised on the dogfood machine. CI uses
-synthetic fixtures and never contains private sessions.
+Real multi-provider discovery is exercised on the primary development machine.
+CI uses synthetic fixtures and never contains private sessions.
 
 | Provider | Recovery root | Included durable state | Consistency handling |
 | --- | --- | --- | --- |

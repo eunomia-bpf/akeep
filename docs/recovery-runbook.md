@@ -81,7 +81,8 @@ systemctl --user status claude-codex-sync-aws.timer
 ```
 
 Do not disable the previous timer until every replacement checkbox in
-[mvp.md](mvp.md#6-replacement-and-dogfood-gate) passes.
+[the migration safety gate](reliability.md#6-migration-safety-gate-for-our-existing-backup)
+passes.
 
 ## Remote incident
 

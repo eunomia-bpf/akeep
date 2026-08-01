@@ -13,12 +13,6 @@ versions, check archive integrity, restore provider-native files, and clone the
 repository. Everything works locally; S3-compatible storage and age encryption
 are optional.
 
-> [!IMPORTANT] The complete versioned-backup loop works with
-> local and S3-compatible targets, optional age encryption, full integrity
-> checks, scratch checkout, repository cloning, and a Linux systemd user timer.
-> Keep an existing backup during the documented shadow-run gate; software
-> passing tests is not yet the same as a proven long-term recovery history.
-
 ## Why Akeep
 
 Coding-agent histories routinely contain hours of decisions, commands, edits,
@@ -41,21 +35,26 @@ Akeep is designed around five promises:
 
 ## Install
 
-Download a ready-to-run archive for your platform from
-[GitHub Releases](https://github.com/eunomia-bpf/akeep/releases). On Linux or
-macOS, the one-line installer downloads the matching binary and verifies its
-checksum:
+On Linux or macOS, install the latest published binary with one command:
 
 ```console
-curl -fsSL https://github.com/eunomia-bpf/akeep/releases/download/v0.1.0-alpha.1/install.sh | sh -s -- v0.1.0-alpha.1
+curl -fsSL https://raw.githubusercontent.com/eunomia-bpf/akeep/main/scripts/install.sh | sh
 ```
 
 The installer detects x86_64/ARM64 and writes to `~/.local/bin` unless
-`AKEEP_INSTALL_DIR` is set. Rust users can instead install from crates.io:
+`AKEEP_INSTALL_DIR` is set. Run it again whenever you want to install the
+newest published release. You can also download and verify an archive directly
+from [GitHub Releases](https://github.com/eunomia-bpf/akeep/releases).
+
+Rust users who want the newest code from `main` can install it directly from
+GitHub:
 
 ```console
-cargo install akeep --version 0.1.0-alpha.1 --locked
+cargo install --git https://github.com/eunomia-bpf/akeep
 ```
+
+Rerun that command with `--force` to replace an existing installation with the
+current `main`. Akeep does not update itself silently.
 
 ## Usage
 
@@ -144,8 +143,8 @@ as manual commits. Uninstalling it leaves configuration and archives untouched:
 akeep schedule uninstall
 ```
 
-If upgrading from an earlier pre-alpha build whose generated service invoked
-`backup`, reinstall the timer immediately after replacing the binary:
+If upgrading from a build whose generated service invoked the former `backup`
+command, reinstall the timer immediately after replacing the binary:
 
 ```console
 akeep schedule install --weekly
@@ -162,36 +161,40 @@ See [configuration and operations](docs/configuration.md) and the
 - It is not a chat-memory or RAG product.
 - It does not promise lossless conversion between undocumented provider session
   formats.
-- It does not delete or offload live provider data in v0.1.
+- It does not delete or offload live provider data.
 - It is not coupled to any observability or analysis product.
 
-## Can it replace an existing backup script?
+## Move from an existing backup
 
-Eventually, yes—but only after evidence.
+Akeep can be used as the primary backup for supported agent histories. When
+migrating from another backup, keep both running until Akeep has completed
+several scheduled commits and you have recovered both a current and an older
+commit. This avoids creating a coverage gap while changing backup systems.
 
-Our initial dogfood machine already has more than 50 GB of agent state and a
-working weekly S3 backup service. Akeep will run beside that service until it
-passes the replacement gate: repeated automatic commits, recovery of both
-current and older versions, byte-level integrity checks, corruption detection,
-and a provider-level restore smoke test. The old service stays enabled until
-those checks pass.
+Our own installation protects more than 50 GB across five agent providers. A
+full recovery reproduced every archived file and byte, recovered SQLite
+databases passed integrity checks, and the bounded pipeline reduced observed
+peak memory from 23.6 GiB to about 243 MiB. The dated evidence and conservative
+migration checklist are documented separately.
 
 See:
 
-- [MVP specification](docs/mvp.md)
-- [Current backup baseline](docs/current-backup-baseline.md)
+- [Configuration and operations](docs/configuration.md)
 - [Provider compatibility matrix](docs/providers.md)
-- [Product and launch plan (中文)](docs/product.zh-CN.md)
 - [Recovery and rollback runbook](docs/recovery-runbook.md)
 - [Testing and reliability evidence](docs/testing.md)
+- [Archive format](docs/archive-format.md)
+- [Product overview (中文)](docs/product.zh-CN.md)
 - [Security policy](SECURITY.md)
 - [Contributing](CONTRIBUTING.md)
 
-## Project status
+## Supported today
 
-The v0.1 versioned-backup feature set is implemented. The project is not ready to
-replace the existing dogfood backup until the time-based shadow-run and recovery
-drills in the replacement gate pass.
+Akeep provides the complete local and S3-compatible versioned-backup loop:
+provider discovery, bounded streaming commits, compression and deduplication,
+optional age encryption, history and diffs, full integrity checks, exact
+scratch recovery, repository cloning, and Linux scheduled commits. See the
+compatibility matrix for the provider data included by each adapter.
 
 ## License
 

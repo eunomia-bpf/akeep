@@ -66,8 +66,9 @@ are re-read before publication. Bucket versioning protects the mutable
 `refs/latest` object but is not required to address immutable manifests by ID.
 
 The local state directory contains the per-vault advisory commit lock and
-private staging directories. v0.1 is single-writer across one machine; operators
-must not schedule the same S3 vault from multiple machines concurrently.
+private staging directories. Akeep is single-writer across one machine;
+operators must not schedule the same S3 vault from multiple machines
+concurrently.
 
 ## Repository clones
 

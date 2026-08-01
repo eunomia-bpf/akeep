@@ -1,8 +1,9 @@
-# Akeep MVP specification
+# Akeep reliability specification
 
-Status: v0.1 implementation complete; dogfood replacement gate in progress
+Status: core backup and recovery workflow available; migration from our previous
+backup service is in progress
 
-Target: a dogfoodable Linux CLI
+Target: a production-usable CLI for local and S3-compatible agent-history backup
 
 Primary success event: an integrity-checked checkout, not a successful upload
 
@@ -13,7 +14,7 @@ Primary success event: an integrity-checked checkout, not a successful upload
 Akeep gives coding-agent work an independent, Git-like version history without
 depending on provider retention policies or undocumented cloud APIs.
 
-The MVP is complete when this loop works on the dogfood machine:
+The backup workflow is successful when this complete loop works:
 
 ```text
 auto-discover -> commit -> chunk -> compress -> [encrypt] -> store
@@ -41,11 +42,11 @@ A commit that has not survived this loop is not counted as successful.
 
 ## 3. Scope
 
-### P0: required for v0.1
+### Core capabilities
 
 #### Source adapters
 
-Raw backup parity with the existing dogfood service:
+Supported provider state:
 
 | Provider | Required state |
 | --- | --- |
@@ -56,7 +57,7 @@ Raw backup parity with the existing dogfood service:
 | OpenCode | consistent SQLite snapshot, storage, prompt history |
 
 An adapter owns only discovery, exclusion policy, stable logical paths, and
-consistent snapshot rules. It does not parse conversations in v0.1.
+consistent snapshot rules. It does not parse conversations.
 
 #### Storage targets
 
@@ -80,11 +81,11 @@ publication of a completed manifest.
 - Host, provider, adapter version, source metadata, and creation time recorded
   without storing secrets in plaintext metadata.
 
-The initial implementation should prefer mature primitives and formats over
+The implementation uses mature primitives and formats instead of
 novel cryptography. Key recovery is part of the restore contract, not an
 afterthought.
 
-#### Commands and minimum UX
+#### Commands and everyday UX
 
 There is no required `add`. Akeep's provider adapters automatically discover
 the narrow durable-state allowlist, so normal use adds no workflow to the agent
@@ -154,16 +155,16 @@ akeep commit -m "before changing the toolchain"
   per-vault lock as manual runs.
 - Make uninstall leave archives and configuration untouched.
 
-### P1: immediately after the replacement gate
+### Additional capabilities
 
-- [Implemented early] Semantic handoff bundle between Claude Code and Codex
+- Semantic handoff bundle between Claude Code and Codex
   containing goal,
   decisions, changed files, commands/results, test status, repository state,
   artifacts, and open tasks.
-- Commit-retention policy with dry-run; no live-state offload yet.
-- macOS scheduler integration.
+- Planned: commit-retention policy with dry-run; no live-state offload.
+- Planned: macOS scheduler integration.
 
-### Explicitly out of scope for v0.1
+### Current non-goals
 
 - Desktop or web UI.
 - Managed cloud service, accounts, billing, or team features.
@@ -182,9 +183,8 @@ Akeep distinguishes three outputs:
 - **Semantic handoff:** create a portable description another agent can use.
 - **Native cross-provider import:** write undocumented target-provider state.
 
-Only exact recovery is part of v0.1. Semantic handoff is P1. Native
-cross-provider import is experimental at most and must never be advertised as
-lossless.
+Exact recovery and semantic handoff are supported. Native cross-provider import
+is not supported and must never be advertised as lossless.
 
 Recovery modes:
 
@@ -199,7 +199,7 @@ Recovery modes:
 Privacy-first means local ownership and explicit network behavior, not mandatory
 encryption. Akeep supports both unencrypted and client-encrypted vaults.
 
-For v0.1:
+Current behavior:
 
 - `encryption = "none"` is a supported, tested mode, not a hidden debug path;
 - client-side authenticated encryption is an optional vault-level mode;
@@ -221,10 +221,10 @@ For v0.1:
 - plaintext staging files use mode 0700 directories and are removed after use.
 
 No upload, account, or telemetry occurs merely because Akeep is installed. Exact
-algorithms and key wrapping should be recorded in the archive-format
-specification during implementation and covered by test vectors.
+algorithms and key wrapping are recorded in the archive-format specification
+and covered by tests.
 
-## 6. Replacement and dogfood gate
+## 6. Migration safety gate for our existing backup
 
 Akeep may replace the current weekly service only after all of these pass:
 
@@ -299,9 +299,9 @@ CLI
 Do not split provider adapters, archive format, sync protocol, or cloud
 components into separate repositories until an external consumer requires it.
 
-## 8. Metrics
+## 8. Reliability metrics
 
-The MVP dashboard should emphasize reliability:
+Reliability reporting should emphasize:
 
 - recovery drills attempted and passed;
 - age of the last fully checked commit;
