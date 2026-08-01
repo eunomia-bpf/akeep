@@ -33,6 +33,7 @@ fn doctor_reports_discovered_providers_as_json() {
     config.sources.opencode_share = Some(temp.path().join("missing-opencode-share"));
     config.sources.opencode_state = Some(temp.path().join("missing-opencode-state"));
     fs::write(&config_path, toml::to_string_pretty(&config).unwrap()).unwrap();
+    let expected_workers = akeep::resources::archive_workers(&config);
 
     Command::cargo_bin("akeep")
         .unwrap()
@@ -45,7 +46,9 @@ fn doctor_reports_discovered_providers_as_json() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"healthy\": true"))
-        .stdout(predicate::str::contains("\"archive_workers\": 4"))
+        .stdout(predicate::str::contains(format!(
+            "\"archive_workers\": {expected_workers}"
+        )))
         .stdout(predicate::str::contains("\"staging_available_bytes\""))
         .stdout(predicate::str::contains("\"provider\": \"claude-code\""))
         .stdout(predicate::str::contains("\"file_count\": 1"));
