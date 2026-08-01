@@ -126,12 +126,10 @@ GitHub、crates.io、Homebrew、主要域名和目标销售地区商标。即使
 - 自动清理本机冷 session；
 - 跨 Provider 原生 session 注入。
 
-### 已提前实现的便携历史能力
+### 已提前实现的语义交接能力
 
 以下原计划放到 v0.2 的能力已经提前实现，但仍是 versioned backup 之上的派生层：
 
-- Claude/Codex 本地全文搜索；
-- Markdown/JSON 导出；
 - Claude ↔ Codex semantic handoff bundle；
 - 当前目标、关键决策、失败方案、文件改动、命令结果、测试状态、Git 状态、
   artifact 和 TODO 的结构化提取；

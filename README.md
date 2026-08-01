@@ -152,8 +152,8 @@ akeep schedule install --weekly
 ```
 
 See [configuration and operations](docs/configuration.md) and the
-[archive format](docs/archive-format.md). Search, export, and cross-agent
-handoff are described in [portable history workflows](docs/portable-history.md).
+[archive format](docs/archive-format.md). Cross-agent handoff is described in
+[the semantic handoff workflow](docs/portable-history.md).
 
 ## What Akeep is not
 

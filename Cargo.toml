@@ -15,7 +15,6 @@ categories = ["command-line-utilities", "filesystem"]
 [dependencies]
 anyhow = "1.0"
 age = "0.12.1"
-base64 = "0.22"
 blake3 = "1.8"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 clap = { version = "4.5", features = ["derive"] }

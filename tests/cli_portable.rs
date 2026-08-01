@@ -3,13 +3,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use assert_cmd::Command;
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
 use predicates::prelude::*;
 use tempfile::TempDir;
 
 #[test]
-fn search_export_and_handoff_work_from_verified_recovery_points() {
+fn handoff_works_from_a_verified_recovery_point() {
     let fixture = Fixture::new();
     fs::write(
         fixture.claude.join("projects/demo/session.jsonl"),
@@ -17,73 +15,6 @@ fn search_export_and_handoff_work_from_verified_recovery_points() {
     )
     .unwrap();
     let first = fixture.backup();
-
-    fixture
-        .command()
-        .args(["index", "rebuild", "--json"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("\"files\": 1"));
-    fixture
-        .command()
-        .args(["search", "akeep-needle", "--json"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("akeep-needle"))
-        .stdout(predicate::str::contains("claude-code"));
-
-    let json_export = fixture.temp.path().join("export.json");
-    fixture
-        .command()
-        .args([
-            "export",
-            &first.snapshot_id,
-            "--format",
-            "json",
-            "--to",
-            json_export.to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-    let document: serde_json::Value =
-        serde_json::from_slice(&fs::read(&json_export).unwrap()).unwrap();
-    let encoded = document["files"][0]["content"].as_str().unwrap();
-    assert_eq!(
-        STANDARD.decode(encoded).unwrap(),
-        b"{\"role\":\"user\",\"text\":\"akeep-needle private context\"}\n"
-    );
-    fixture
-        .command()
-        .args([
-            "export",
-            &first.snapshot_id,
-            "--format",
-            "json",
-            "--to",
-            json_export.to_str().unwrap(),
-        ])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("refusing to overwrite"));
-
-    let markdown_export = fixture.temp.path().join("export.md");
-    fixture
-        .command()
-        .args([
-            "export",
-            &first.snapshot_id,
-            "--format",
-            "markdown",
-            "--to",
-            markdown_export.to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-    assert!(
-        fs::read_to_string(&markdown_export)
-            .unwrap()
-            .contains("akeep-needle private context")
-    );
 
     let repository = fixture.temp.path().join("repository");
     initialize_repository(&repository);
@@ -129,25 +60,6 @@ fn search_export_and_handoff_work_from_verified_recovery_points() {
     ] {
         assert!(handoff.contains(expected), "missing {expected:?}");
     }
-
-    fs::remove_file(fixture.claude.join("projects/demo/session.jsonl")).unwrap();
-    fs::write(
-        fixture.claude.join("projects/demo/current.jsonl"),
-        b"{\"text\":\"new session\"}\n",
-    )
-    .unwrap();
-    fixture.backup();
-    fixture
-        .command()
-        .args(["index", "rebuild"])
-        .assert()
-        .success();
-    fixture
-        .command()
-        .args(["search", "akeep-needle"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("session.jsonl"));
 }
 
 struct Fixture {

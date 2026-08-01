@@ -41,7 +41,7 @@ The suite covers:
   reconstruction of multi-chunk files;
 - 32 MiB multi-chunk scale and incremental rerun behavior;
 - systemd ownership, rollback, escaping, persistence, and uninstall behavior;
-- search, exact JSON/base64 export, Markdown export, and semantic handoff.
+- reviewed Claude Code ↔ Codex semantic handoff.
 
 The fake S3 CLI exercises the same process boundary and object contract as the
 real backend while keeping CI offline and deterministic. It also asserts that a

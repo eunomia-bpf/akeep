@@ -7,11 +7,9 @@ use crate::archive;
 use crate::config::{self, EncryptionMode, TargetConfig};
 use crate::crypto;
 use crate::doctor;
-use crate::export::{self, ExportFormat};
 use crate::handoff::{self, HandoffRequest};
 use crate::providers::Provider;
 use crate::scheduler;
-use crate::search;
 use crate::vault::Vault;
 
 #[derive(Debug, Parser)]
@@ -62,18 +60,6 @@ pub enum Command {
         #[command(subcommand)]
         command: ScheduleCommand,
     },
-
-    /// Build the disposable local full-text index.
-    Index {
-        #[command(subcommand)]
-        command: IndexCommand,
-    },
-
-    /// Search indexed Claude Code and Codex history.
-    Search(SearchArgs),
-
-    /// Export a committed version as readable Markdown or exact JSON/base64.
-    Export(ExportArgs),
 
     /// Create a reviewed Claude Code ↔ Codex handoff bundle.
     Handoff(HandoffArgs),
@@ -241,45 +227,6 @@ pub enum ScheduleCommand {
         #[arg(long)]
         json: bool,
     },
-}
-
-#[derive(Debug, Subcommand)]
-pub enum IndexCommand {
-    /// Rebuild the index from the newest archived version of every known path.
-    Rebuild(OutputArgs),
-}
-
-#[derive(Debug, Args)]
-pub struct SearchArgs {
-    /// Literal words to find; all words must occur in a result.
-    pub query: String,
-
-    /// Maximum number of results.
-    #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u32).range(1..=1000))]
-    pub limit: u32,
-
-    /// Emit stable machine-readable output.
-    #[arg(long)]
-    pub json: bool,
-}
-
-#[derive(Debug, Args)]
-pub struct ExportArgs {
-    /// Commit ID, `HEAD`, or an ancestor such as `HEAD~1`.
-    #[arg(default_value = "HEAD")]
-    pub snapshot: String,
-
-    /// Export representation.
-    #[arg(long, value_enum)]
-    pub format: ExportFormat,
-
-    /// New file to create; existing files are never overwritten.
-    #[arg(long, required = true, value_name = "FILE")]
-    pub to: PathBuf,
-
-    /// Emit a stable machine-readable report.
-    #[arg(long)]
-    pub json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -571,52 +518,6 @@ pub fn run(cli: Cli) -> Result<()> {
                 println!("Active: {}", report.active);
                 println!("Service: {}", report.service_path.display());
                 println!("Timer: {}", report.timer_path.display());
-            }
-        }
-        Command::Index { command } => {
-            let active = config::Config::load(&config_path)?;
-            match command {
-                IndexCommand::Rebuild(args) => {
-                    let report = search::rebuild(&active)?;
-                    if args.json {
-                        println!("{}", serde_json::to_string_pretty(&report)?);
-                    } else {
-                        println!("Rebuilt search index: {}", report.index_path.display());
-                        println!("Commits scanned: {}", report.recovery_points_scanned);
-                        println!("Files: {}", report.files);
-                        println!("Indexed lines: {}", report.lines);
-                        println!("Logical bytes: {}", report.logical_bytes);
-                    }
-                }
-            }
-        }
-        Command::Search(args) => {
-            let active = config::Config::load(&config_path)?;
-            let results = search::query(&active, &args.query, args.limit)?;
-            if args.json {
-                println!("{}", serde_json::to_string_pretty(&results)?);
-            } else if results.is_empty() {
-                println!("No matches.");
-            } else {
-                for result in results {
-                    println!(
-                        "{}:{}:{}  {}",
-                        result.provider, result.logical_path, result.line_number, result.snippet
-                    );
-                }
-            }
-        }
-        Command::Export(args) => {
-            let active = config::Config::load(&config_path)?;
-            let report = export::export(&active, &args.snapshot, args.format, &args.to)?;
-            if args.json {
-                println!("{}", serde_json::to_string_pretty(&report)?);
-            } else {
-                println!("Exported commit {}", report.snapshot_id);
-                println!("Output: {}", report.output.display());
-                println!("Files included: {}", report.files_included);
-                println!("Files omitted: {}", report.files_omitted);
-                println!("Logical bytes included: {}", report.logical_bytes_included);
             }
         }
         Command::Handoff(args) => {

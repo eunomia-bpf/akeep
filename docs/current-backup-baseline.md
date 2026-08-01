@@ -45,7 +45,7 @@ there is no client-side encryption.
 | Recovery | Download current prefix to scratch | Checkout any commit, hash every file, report conflicts |
 | Repository copy | Standard AWS tooling | Exact local/S3-to-local `clone` bundle |
 | Provider restore test | Manual/not encoded | Automated isolated smoke test for Claude and Codex |
-| Search/handoff | None | Implemented as rebuildable derived output |
+| Cross-agent handoff | None | Reviewed semantic handoff bundle |
 
 ## Existing strengths Akeep must preserve
 

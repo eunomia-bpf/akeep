@@ -104,7 +104,6 @@ dependencies = [
  "age",
  "anyhow",
  "assert_cmd",
- "base64",
  "blake3",
  "chrono",
  "clap",

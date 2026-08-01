@@ -156,9 +156,6 @@ akeep commit -m "before changing the toolchain"
 
 ### P1: immediately after the replacement gate
 
-- [Implemented early] Claude Code and Codex local full-text search with a
-  rebuildable SQLite index.
-- [Implemented early] Markdown and JSON export.
 - [Implemented early] Semantic handoff bundle between Claude Code and Codex
   containing goal,
   decisions, changed files, commands/results, test status, repository state,

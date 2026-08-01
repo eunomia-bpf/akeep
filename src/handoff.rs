@@ -1,4 +1,4 @@
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -7,7 +7,6 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
-use crate::export::create_output;
 use crate::manifest::{ArchivedFileKind, FileRecord};
 use crate::providers::Provider;
 use crate::vault::Vault;
@@ -379,6 +378,44 @@ fn sync_directory(path: &Path) -> Result<()> {
         .sync_all()
         .with_context(|| format!("failed to sync directory {}", path.display()))?;
     Ok(())
+}
+
+fn create_output(vault: &Vault, path: &Path) -> Result<File> {
+    if path.file_name().is_none() {
+        bail!("handoff output must name a file: {}", path.display());
+    }
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let resolved_parent = fs::canonicalize(parent)
+        .with_context(|| format!("handoff parent does not exist: {}", parent.display()))?;
+    let resolved_output = resolved_parent.join(path.file_name().unwrap());
+    for protected in vault
+        .filesystem_root()
+        .into_iter()
+        .chain(std::iter::once(vault.state_root()))
+    {
+        let protected = fs::canonicalize(protected)
+            .with_context(|| format!("failed to resolve Akeep path {}", protected.display()))?;
+        if protected.starts_with(&resolved_output) || resolved_output.starts_with(&protected) {
+            bail!(
+                "handoff output {} overlaps repository/state path {}",
+                path.display(),
+                protected.display()
+            );
+        }
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options
+        .open(path)
+        .with_context(|| format!("refusing to overwrite handoff {}", path.display()))
 }
 
 #[cfg(test)]

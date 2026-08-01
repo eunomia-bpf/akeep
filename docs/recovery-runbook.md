@@ -14,9 +14,9 @@ akeep checkout HEAD --to /tmp/akeep-drill
 akeep checkout HEAD --provider claude-code --to /tmp/akeep-claude-drill
 ```
 
-Compare recovered file BLAKE3 hashes with the JSON export or manifest. Open
-recovered SQLite files with `PRAGMA integrity_check`. Keep the scratch directory
-separate from live provider homes.
+Confirm `akeep fsck` succeeds and compare recovered file BLAKE3 hashes with the
+manifest. Open recovered SQLite files with `PRAGMA integrity_check`. Keep the
+scratch directory separate from live provider homes.
 
 To confirm that current provider binaries recognize the restored native state,
 open their local resume pickers against the scratch copy and exit without
