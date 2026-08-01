@@ -25,7 +25,10 @@ pub fn archive_workers(config: &Config) -> usize {
 }
 
 pub fn estimated_peak_memory_bytes(config: &Config) -> u64 {
-    let buffers_per_worker = (ARCHIVE_CHUNKS_PER_FILE_BATCH + 4) as u64;
+    // Allow for raw, compressed, encrypted, and allocator-held copies while a
+    // worker is processing one chunk batch. The default estimate (256 MiB)
+    // intentionally tracks the observed 243 MiB dogfood peak conservatively.
+    let buffers_per_worker = (ARCHIVE_CHUNKS_PER_FILE_BATCH * 4) as u64;
     (archive_workers(config) as u64)
         .saturating_mul(buffers_per_worker)
         .saturating_mul(config.archive.chunk_size)
