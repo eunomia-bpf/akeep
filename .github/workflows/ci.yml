@@ -32,6 +32,11 @@ jobs:
         run: AKEEP_BIN=target/debug/akeep ./scripts/demo.sh
       - name: Package
         run: cargo package --locked
+      - name: Install packaged CLI
+        shell: bash
+        run: |
+          cargo install --path . --locked --root "$RUNNER_TEMP/akeep-install"
+          "$RUNNER_TEMP/akeep-install/bin/akeep" --version
 
   msrv:
     name: Rust 1.85 compatibility

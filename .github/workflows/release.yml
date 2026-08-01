@@ -9,50 +9,152 @@ permissions:
 
 jobs:
   build:
+    name: Build (${{ matrix.target }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            artifact: linux
-          - os: macos-latest
-            artifact: macos
-    runs-on: ${{ matrix.os }}
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --all-targets --locked
-      - run: cargo build --release --locked
+        with:
+          key: release-${{ matrix.target }}
+      - name: Check tag version
+        shell: bash
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          test "$GITHUB_REF_NAME" = "v$version"
+      - name: Test
+        run: cargo test --all-targets --locked
+      - name: Build release binary
+        run: cargo build --release --locked --target "${{ matrix.target }}"
       - name: Package binary
         shell: bash
         run: |
           set -euo pipefail
-          host="$(rustc -vV | awk '/^host:/ {print $2}')"
-          archive="akeep-${GITHUB_REF_NAME}-${host}.tar.gz"
+          archive="akeep-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz"
           mkdir -p dist/package
-          cp target/release/akeep README.md LICENSE dist/package/
+          cp "target/${{ matrix.target }}/release/akeep" README.md CHANGELOG.md LICENSE dist/package/
+          "dist/package/akeep" --version
           tar -C dist/package -czf "dist/${archive}" .
           rm -rf dist/package
+      - uses: actions/attest@v4
+        with:
+          subject-path: dist/*.tar.gz
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: dist/*
+          name: ${{ matrix.target }}
+          path: dist/*.tar.gz
           if-no-files-found: error
 
   publish:
+    name: Publish GitHub prerelease
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
-      - name: Generate checksums
-        run: sha256sum dist/* > dist/SHA256SUMS
-      - name: Create GitHub release
+      - name: Generate release assets
+        run: |
+          cp scripts/install.sh dist/install.sh
+          cd dist
+          sha256sum *.tar.gz install.sh > SHA256SUMS
+      - name: Create GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes dist/*
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Akeep ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --prerelease \
+            dist/*
+
+  release-smoke:
+    name: Release smoke (${{ matrix.target }})
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Download and verify public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir release
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir release
+          cd release
+          archive="akeep-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz"
+          expected="$(awk -v archive="$archive" '$2 == archive { print $1 }' SHA256SUMS)"
+          if command -v sha256sum >/dev/null 2>&1; then
+            actual="$(sha256sum "$archive" | awk '{print $1}')"
+          else
+            actual="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          fi
+          test -n "$expected" && test "$actual" = "$expected"
+          tar -xzf "$archive"
+          ./akeep --version
+      - name: Exercise installed binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/akeep-release-smoke"
+          mkdir -p "$root/claude/projects/demo"
+          printf '{"message":"release smoke"}\n' > "$root/claude/projects/demo/session.jsonl"
+          export CLAUDE_CONFIG_DIR="$root/claude"
+          release/akeep --config "$root/config.toml" init --target "$root/vault"
+          release/akeep --config "$root/config.toml" commit -m "release smoke"
+          release/akeep --config "$root/config.toml" fsck HEAD
+
+  registry-smoke:
+    name: crates.io install smoke
+    needs: publish
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install from crates.io
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          for attempt in 1 2 3 4 5; do
+            if cargo install akeep --version "$version" --locked --root "$RUNNER_TEMP/akeep-registry"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then exit 1; fi
+            sleep 30
+          done
+          "$RUNNER_TEMP/akeep-registry/bin/akeep" --version
