@@ -1,7 +1,7 @@
 # Akeep archive format v1
 
-The archive is an application-level content-addressed store. Filesystem and S3
-targets expose the same logical keys:
+The archive is an application-level content-addressed store. Filesystem,
+S3-compatible, and Git targets expose the same logical keys:
 
 ```text
 vault.json
@@ -64,11 +64,16 @@ Filesystem objects and references are written to a temporary file, synced, and
 atomically renamed. S3 puts are complete-object operations and uploaded sizes
 are re-read before publication. Bucket versioning protects the mutable
 `refs/latest` object but is not required to address immutable manifests by ID.
+The Git backend writes the same keys below `repository/`, commits a completed
+tree, checks that the remote branch has not advanced, and pushes one branch
+update. A rejected or non-fast-forward push leaves the previous remote commit
+unchanged.
 
 The local state directory contains the per-vault advisory commit lock and
 private staging directories. Akeep is single-writer across one machine;
 operators must not schedule the same S3 vault from multiple machines
-concurrently.
+concurrently. A Git target detects a concurrent remote advance and requires the
+stale writer to retry; it does not merge backup branches.
 
 ## Repository clones
 

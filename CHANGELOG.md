@@ -4,6 +4,24 @@ All notable changes are documented here. Akeep follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-01
+
+### Added
+
+- A formal Git remote backend for private GitHub Repos and other Git servers,
+  using the installed Git CLI and existing SSH or credential-helper setup.
+- Existing-vault adoption from a second client, private local cache
+  rehydration, dedicated branches, and one Git commit per Akeep snapshot.
+- End-to-end tests for remote recovery, second-client setup, rejected pushes,
+  retry safety, and concurrent remote advances.
+
+### Changed
+
+- Cloud-backup documentation now names AWS S3, Cloudflare R2, and GitHub Repo
+  targets explicitly and explains when object storage is a better fit than Git.
+- Git-backed status checks reserve cache space and warn when a GitHub archive
+  exceeds the host's recommended repository size.
+
 ## [0.1.0] - 2026-08-01
 
 ### Added
@@ -74,6 +92,7 @@ All notable changes are documented here. Akeep follows Semantic Versioning.
 - Product positioning now leads with privacy-first version history for agents;
   integrity checks and exact recovery remain core mechanisms.
 
-[Unreleased]: https://github.com/eunomia-bpf/akeep/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/eunomia-bpf/akeep/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/eunomia-bpf/akeep/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/eunomia-bpf/akeep/compare/v0.1.0-alpha.1...v0.1.0
 [0.1.0-alpha.1]: https://github.com/eunomia-bpf/akeep/releases/tag/v0.1.0-alpha.1

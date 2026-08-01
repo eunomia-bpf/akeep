@@ -10,8 +10,9 @@ Your agent history is not a cache.
 Akeep is a privacy-first CLI that discovers coding-agent sessions and saves
 them as compressed, deduplicated commits. You can inspect history, compare two
 versions, check archive integrity, restore provider-native files, and clone the
-repository. Everything works locally; S3-compatible storage and age encryption
-are optional.
+repository. Store it locally or back it up to AWS S3, Cloudflare R2, or a Git
+repository such as a private GitHub Repo. Client-side age encryption is
+optional.
 
 ## Why Akeep
 
@@ -25,8 +26,8 @@ Akeep is designed around five promises:
 
 - **Versioned:** commits have messages and parent links; `HEAD~N`, `log`, and
   `diff` make history understandable.
-- **Cloud backup:** keep history locally or back it up to AWS S3 and
-  S3-compatible storage such as Cloudflare R2.
+- **Cloud backup:** choose AWS S3, Cloudflare R2, a GitHub Repo, another Git
+  remote, or local storage.
 - **Exact:** raw provider files remain the source of truth and are preserved
   byte-for-byte.
 - **Private:** no upload or telemetry happens by default. Client-side
@@ -84,7 +85,7 @@ adapters discover the supported durable files automatically. First-time setup
 is `init`, `status`, `commit`; ordinary use can be only `commit`. Akeep skips
 known credential, cache, and temporary paths and never follows symlinks.
 
-`clone` copies the active repository—filesystem or S3—into
+`clone` copies the active repository—filesystem, S3/R2, or Git—into
 `DIRECTORY/{config.toml,repository/,state/}` and checks every transferred
 object plus the cloned commit chain. Use the clone directly:
 
@@ -148,6 +149,31 @@ akeep init \
   --encryption age
 ```
 
+For a private GitHub Repo or another Git remote, create the empty remote first,
+then dedicate a branch to Akeep:
+
+```console
+akeep init \
+  --git-repository git@github.com:OWNER/agent-history.git \
+  --git-branch akeep \
+  --encryption age
+```
+
+Akeep uses the installed Git CLI and your existing SSH agent or credential
+helper; it does not store a GitHub token. Each completed Akeep snapshot is
+published as one Git commit, with the manifest and `refs/latest` written last.
+If a push fails or another writer advances the branch, Akeep refuses to publish
+a partial or stale snapshot. A second machine can run the same `init` command
+to adopt the existing vault ID; for age encryption, pass a separately copied
+identity with `--age-identity-file`.
+
+GitHub recommends repositories remain small and enforces a 2 GB push limit, so
+use the Git backend for smaller histories, migration, and controlled sharing.
+Use S3 or R2 for large or fast-growing daily archives. Keep session-history
+repositories private unless their contents are age-encrypted. See GitHub's
+[repository limits](https://docs.github.com/en/repositories/creating-and-managing-repositories/repository-limits)
+and [Git authentication guidance](https://docs.github.com/en/get-started/git-basics/why-is-git-always-asking-for-my-credentials).
+
 The Linux scheduler installs one service and timer per vault under the systemd
 user-unit directory. It is persistent across downtime, adds a randomized
 six-hour delay, runs with low CPU/I/O priority, and uses the same per-vault lock
@@ -204,7 +230,7 @@ See:
 
 ## Supported today
 
-Akeep provides the complete local and S3-compatible versioned-backup loop:
+Akeep provides the complete local, S3/R2, and Git-remote versioned-backup loop:
 provider discovery, bounded streaming commits, compression and deduplication,
 optional age encryption, history and diffs, full integrity checks, exact
 scratch recovery, repository cloning, and Linux scheduled commits. See the

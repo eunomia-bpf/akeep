@@ -11,7 +11,7 @@ body:
     id: version
     attributes:
       label: Akeep version
-      placeholder: akeep 0.1.0
+      placeholder: Output of `akeep --version`
     validations:
       required: true
   - type: dropdown
@@ -21,7 +21,10 @@ body:
       options:
         - Filesystem
         - AWS S3
+        - Cloudflare R2
         - Other S3-compatible service
+        - GitHub Repo
+        - Other Git remote
     validations:
       required: true
   - type: textarea

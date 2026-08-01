@@ -3,7 +3,7 @@
 Status: core backup and recovery workflow available; migration from our previous
 backup service is in progress
 
-Target: a production-usable CLI for local and S3-compatible agent-history backup
+Target: a production-usable CLI for local, S3/R2, and Git-remote agent-history backup
 
 Primary success event: an integrity-checked checkout, not a successful upload
 
@@ -64,6 +64,8 @@ consistent snapshot rules. It does not parse conversations.
 - Local filesystem target. Its root may be on an internal disk, external disk,
   NAS mount, or directory synchronized by another tool.
 - S3-compatible target, including AWS S3 and compatible services.
+- Git target, including private GitHub Repos and other Git servers. It uses a
+  dedicated branch and the user's existing Git authentication.
 
 The archive layer must not depend on S3 semantics. Storage targets implement a
 small object contract: put-if-absent, get, stat, list by prefix, and atomic
@@ -143,7 +145,7 @@ akeep commit -m "before changing the toolchain"
 
 `akeep clone <directory>`
 
-- Copy the active filesystem or S3 repository into a new local bundle.
+- Copy the active filesystem, S3/R2, or Git repository into a new local bundle.
 - Check every copied object's transport hash and the cloned commit chain.
 - Include a directly usable config and independent mutable state.
 - Never copy an age private identity; keep an incomplete marker on failure.
@@ -292,7 +294,8 @@ CLI
  │   └─ manifest
  ├─ storage target
  │   ├─ filesystem
- │   └─ S3-compatible
+ │   ├─ S3-compatible
+ │   └─ Git remote
  └─ fsck, diff, clone, and checkout
 ```
 

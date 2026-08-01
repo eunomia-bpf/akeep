@@ -1,6 +1,7 @@
 # Akeep 产品说明
 
-状态：核心备份与恢复流程已经实现，可直接用于本地或 S3-compatible 存储
+状态：核心备份与恢复流程已经实现，可直接用于本地、AWS S3、Cloudflare R2
+或 GitHub Repo/其他 Git remote
 
 产品关系：Akeep 是完全独立的产品、代码库和品牌
 
@@ -41,7 +42,8 @@ init -> status -> commit -> work normally -> commit
 
 不建议改名为 `akgit`：
 
-- `Akeep` 直接表达“替用户保存 Agent work”，可以覆盖本地、S3、未来托管同步；
+- `Akeep` 直接表达“替用户保存 Agent work”，可以覆盖本地、S3/R2、GitHub Repo
+  和未来托管同步；
 - `akgit` 会暗示 Git object/protocol 兼容、working tree、staging、branch、merge、
   remote 和冲突语义；Akeep 有意不实现这些；
 - 用户真正需要的是熟悉的少数动作，不是第二套 Git；
@@ -107,7 +109,7 @@ init -> status -> commit -> work normally -> commit
 - 内容寻址的增量 archive；
 - commit message、parent、`HEAD~N` 与跨 commit 压缩去重；
 - 可选的上传前客户端加密，`none` 是完整支持的模式；
-- 本地目录与 S3-compatible 两个 target；
+- 本地目录、S3-compatible（包括 AWS S3/R2）与 Git remote 三类 target；
 - `init`、`status`、`commit`、`log`、`diff`、`fsck`、`checkout`、`clone`；
 - Linux systemd 定时器；
 - 默认不改 Provider 文件、不传播删除、不覆盖恢复目标；
@@ -145,12 +147,13 @@ init -> status -> commit -> work normally -> commit
 
 - **Provider adapter** 负责发现和一致性快照：Claude、Codex、Grok、Kimi、
   OpenCode。
-- **Storage target** 负责保存 opaque objects：本地 filesystem、S3-compatible。
+- **Storage target** 负责保存 opaque objects：本地 filesystem、S3-compatible、
+  Git remote/GitHub Repo。
 
 当前不做庞大的插件系统，只保留清晰的内部边界。S3-compatible 已经覆盖
-AWS S3、R2、MinIO、Backblaze B2 等大量服务；本地 filesystem 又能覆盖外接
-硬盘、NAS mount 和由 Syncthing/rclone 管理的目录。等真实用户要求 WebDAV
-或其他 target 时再新增。
+AWS S3、R2、MinIO、Backblaze B2 等大量服务；Git target 复用用户现有 SSH
+agent 或 credential helper，支持私有 GitHub Repo 和其他 Git server；本地
+filesystem 又能覆盖外接硬盘、NAS mount 和由 Syncthing/rclone 管理的目录。
 
 Provider adapter 不应决定 archive 格式，storage target 也不应看懂 transcript。
 这样新增 Agent 不会修改 archive/恢复核心；开启客户端加密时，新增 backend
@@ -160,14 +163,17 @@ Provider adapter 不应决定 archive 格式，storage target 也不应看懂 tr
 
 Akeep 当前可以承诺：
 
-- commit 直接写入一个用户选择的本地或 S3-compatible repository；
-- `clone` 能把 filesystem 或 S3 repository 精确复制成可独立使用的本地 bundle；
+- commit 直接写入用户选择的本地、S3/R2 或 Git repository；
+- `clone` 能把 filesystem、S3/R2 或 Git repository 精确复制成可独立使用的
+  本地 bundle；
 - 用户可把 filesystem target 放在 NAS、Syncthing 或 rclone 管理的目录。
+- 第二台机器可用同一 Git URL/branch 初始化并自动接入已有 vault ID；Akeep
+  检测远端推进但不自动合并并发写入。
 
-它还不能宣传成实时多设备双向 sync。当前没有 device identity、并发 writer
-协调、分支/冲突、增量 pull 或 key pairing。首页应使用 “local or your own
-storage” 和 “clone” 等准确表达；“managed encrypted sync” 留给有协议和冲突
-语义的后续产品。
+它还不能宣传成实时多设备双向 sync。Git backend 支持 fetch、缓存重建和
+non-fast-forward 拒绝，但没有自动 merge、device identity 或 key pairing。
+首页应使用 “cloud backup” 和 “clone” 等准确表达；“managed encrypted sync”
+留给有账号、协议和冲突语义的后续产品。
 
 ## 隐私承诺
 
@@ -234,7 +240,7 @@ Akeep 的楔子应该是：
 但真正的产品差异不能只写成 `commit/log/diff`。与最接近的 Entire 相比，Akeep
 不依赖每个代码仓库的 Git hook 或用户代码 commit，而是跨项目、跨 Provider
 备份完整的 provider-native durable state；与 stift/Claude Sync 相比，Akeep
-不要求账号或 server，支持本地/S3、自选 plaintext/age，并包含 live SQLite
+支持用户直接选择本地/S3/R2/Git、自选 plaintext/age，并包含 live SQLite
 一致性 snapshot 和完整 scratch checkout。这个差异必须由兼容矩阵、50+ GB
 真实大规模备份、故障注入和恢复演练证明，不能只靠命令名字。
 

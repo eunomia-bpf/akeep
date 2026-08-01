@@ -100,7 +100,7 @@ pub fn inspect(config_path: &Path, config: &Config) -> DoctorReport {
             path.display().to_string()
         }
         TargetConfig::S3 { bucket, prefix, .. } => {
-            match Storage::from_config(&config.target) {
+            match Storage::from_config(&config.target, &config.vault.state_path) {
                 Ok(storage) => {
                     if let Err(error) = storage.check_readable() {
                         errors.push(format!("remote vault target is not readable: {error:#}"));
@@ -131,6 +131,25 @@ pub fn inspect(config_path: &Path, config: &Config) -> DoctorReport {
                 );
             }
             format!("s3://{bucket}/{prefix}/")
+        }
+        TargetConfig::Git {
+            repository, branch, ..
+        } => {
+            match Storage::from_config(&config.target, &config.vault.state_path) {
+                Ok(storage) => {
+                    if let Err(error) = storage.check_readable() {
+                        errors.push(format!("Git vault target is not readable: {error:#}"));
+                    }
+                }
+                Err(error) => errors.push(format!("Git vault target is not readable: {error:#}")),
+            }
+            if config.encryption.mode == crate::config::EncryptionMode::None {
+                warnings.push(
+                    "remote vault is not client-side encrypted; the Git host can read archived content"
+                        .to_string(),
+                );
+            }
+            crate::storage::git_target_description(repository, branch)
         }
     };
     if let Err(error) = CryptoContext::from_config(&config.encryption) {
@@ -185,7 +204,7 @@ pub fn inspect(config_path: &Path, config: &Config) -> DoctorReport {
         );
     }
 
-    let logical_bytes = providers
+    let logical_bytes: u64 = providers
         .iter()
         .map(|provider| provider.logical_bytes)
         .sum();
@@ -207,9 +226,19 @@ pub fn inspect(config_path: &Path, config: &Config) -> DoctorReport {
         })
         .map(|(_, inventory)| inventory.logical_bytes)
         .sum::<u64>();
-    let upload_staging_bytes = matches!(config.target, TargetConfig::S3 { .. })
-        .then_some(S3_UPLOAD_BATCH_BYTES.max(largest_file_bytes))
-        .unwrap_or(0);
+    let upload_staging_bytes = match &config.target {
+        TargetConfig::S3 { .. } => S3_UPLOAD_BATCH_BYTES.max(largest_file_bytes),
+        TargetConfig::Git { repository, .. } => {
+            if repository.contains("github.com") && logical_bytes > 1024 * 1024 * 1024 {
+                warnings.push(
+                    "GitHub recommends keeping repositories below 1 GiB; use S3/R2 for large histories"
+                        .to_string(),
+                );
+            }
+            logical_bytes.saturating_mul(2)
+        }
+        TargetConfig::Filesystem { .. } => 0,
+    };
     let staging_required_bytes = snapshot_staging_bytes
         .saturating_add(upload_staging_bytes)
         .saturating_add(RESOURCE_RESERVE_BYTES);

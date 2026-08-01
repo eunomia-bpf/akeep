@@ -25,14 +25,16 @@ The suite covers:
 - live SQLite backup during concurrent WAL writes and recovered
   `PRAGMA integrity_check`;
 - early staging of rotating provider files that disappear before archival;
-- local, plaintext S3-compatible, and age-encrypted round trips;
+- local, plaintext S3-compatible, Git-remote, and age-encrypted round trips;
 - commit messages, parent chains, `HEAD~N`, and add/modify/delete diffs;
-- exact filesystem/S3 repository clones, encrypted-key non-copying, overlap
+- exact filesystem/S3/Git repository clones, encrypted-key non-copying, overlap
   refusal, and incomplete-clone markers;
 - content deduplication within a chunk batch, across parallel files, and across
   commits;
 - interrupted remote upload with no manifest publication, followed by a
   successful retry;
+- Git cache rehydration, second-client vault adoption, rejected-push retry, and
+  concurrent remote-advance refusal;
 - missing, corrupt, and reordered object rejection;
 - non-empty, symlinked, and vault-overlapping recovery target rejection;
 - incomplete recovery markers and byte/hash validation;
@@ -46,12 +48,14 @@ The suite covers:
 The fake S3 CLI exercises the same process boundary and object contract as the
 real backend while keeping CI offline and deterministic. It also asserts that a
 multi-chunk commit uses one recursive object-batch upload instead of one AWS CLI
-process per chunk.
+process per chunk. Git tests use real local bare repositories and server hooks,
+so fetch, commit, push rejection, retry, and non-fast-forward behavior cross the
+same process boundary as GitHub.
 
 The release workflow builds native Linux x86_64/ARM64 and macOS Intel/Apple
 Silicon archives, attests them, publishes checksums, downloads each public
 artifact on its matching architecture, and runs `init`, `commit`, and `fsck`.
-It separately installs the tagged version from crates.io.
+It separately installs the published version from crates.io.
 
 For a short end-to-end demonstration:
 

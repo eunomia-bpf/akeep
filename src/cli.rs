@@ -68,11 +68,19 @@ pub enum Command {
 #[derive(Debug, Args)]
 pub struct InitArgs {
     /// Filesystem directory that will hold the repository.
-    #[arg(long, value_name = "DIRECTORY", conflicts_with = "s3_bucket")]
+    #[arg(
+        long,
+        value_name = "DIRECTORY",
+        conflicts_with_all = ["s3_bucket", "git_repository"]
+    )]
     pub target: Option<PathBuf>,
 
     /// S3 bucket that will hold the repository.
-    #[arg(long, value_name = "BUCKET", conflicts_with = "target")]
+    #[arg(
+        long,
+        value_name = "BUCKET",
+        conflicts_with_all = ["target", "git_repository"]
+    )]
     pub s3_bucket: Option<String>,
 
     /// Relative prefix within the S3 bucket.
@@ -94,6 +102,27 @@ pub struct InitArgs {
     /// AWS CLI executable override.
     #[arg(long, value_name = "FILE", requires = "s3_bucket")]
     pub aws_cli: Option<PathBuf>,
+
+    /// Git repository URL or path that will hold the backup.
+    #[arg(
+        long,
+        value_name = "URL",
+        conflicts_with_all = ["target", "s3_bucket"]
+    )]
+    pub git_repository: Option<String>,
+
+    /// Dedicated branch within the Git repository.
+    #[arg(
+        long,
+        value_name = "BRANCH",
+        default_value = "akeep",
+        requires = "git_repository"
+    )]
+    pub git_branch: String,
+
+    /// Git executable override.
+    #[arg(long, value_name = "FILE", requires = "git_repository")]
+    pub git_cli: Option<PathBuf>,
 
     /// Vault encryption mode.
     #[arg(long, value_enum, default_value_t = EncryptionMode::None)]
@@ -290,6 +319,12 @@ pub fn run(cli: Cli) -> Result<()> {
                     endpoint_url: args.s3_endpoint_url,
                     aws_cli: args.aws_cli,
                 }
+            } else if let Some(repository) = args.git_repository {
+                TargetConfig::Git {
+                    repository,
+                    branch: args.git_branch,
+                    git_cli: args.git_cli,
+                }
             } else {
                 TargetConfig::Filesystem {
                     path: args.target.unwrap_or(config::default_vault_path()?),
@@ -310,7 +345,14 @@ pub fn run(cli: Cli) -> Result<()> {
                     return Err(error);
                 }
             };
-            if let Err(error) = Vault::open(&created) {
+            let opened = (|| {
+                let vault = Vault::open(&created)?;
+                if let Some(snapshot_id) = vault.latest_snapshot_id()? {
+                    vault.load_manifest_by_id(&snapshot_id)?;
+                }
+                Ok::<_, anyhow::Error>(())
+            })();
+            if let Err(error) = opened {
                 let _ = std::fs::remove_file(&config_path);
                 let _ = std::fs::remove_dir_all(&created.vault.state_path);
                 if let Some(path) = generated_identity {
@@ -329,6 +371,19 @@ pub fn run(cli: Cli) -> Result<()> {
                     if created.encryption.mode == EncryptionMode::None {
                         println!(
                             "Warning: this remote repository is not client-side encrypted; the storage operator can read it."
+                        );
+                    }
+                }
+                TargetConfig::Git {
+                    repository, branch, ..
+                } => {
+                    println!(
+                        "Target: {}",
+                        crate::storage::git_target_description(repository, branch)
+                    );
+                    if created.encryption.mode == EncryptionMode::None {
+                        println!(
+                            "Warning: this remote repository is not client-side encrypted; the Git host can read it."
                         );
                     }
                 }

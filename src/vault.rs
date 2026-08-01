@@ -52,6 +52,8 @@ struct VaultMetadata {
     format_version: u32,
     vault_id: Uuid,
     encryption: EncryptionMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recipient: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -67,7 +69,7 @@ struct VerificationReceipt {
 impl Vault {
     pub fn open(config: &Config) -> Result<Self> {
         let vault = Self {
-            storage: Storage::from_config(&config.target)?,
+            storage: Storage::from_config(&config.target, &config.vault.state_path)?,
             state_root: config.vault.state_path.clone(),
             vault_id: config.vault.id,
             codec: CryptoContext::from_config(&config.encryption)?,
@@ -286,7 +288,8 @@ impl Vault {
             format!("{}\n", manifest.snapshot_id).as_bytes(),
             true,
         )?;
-        Ok(())
+        self.storage
+            .publish(&format!("Akeep snapshot {}", manifest.snapshot_id))
     }
 
     pub fn load_manifest(&self, reference: &str) -> Result<Manifest> {
@@ -351,9 +354,12 @@ impl Vault {
     }
 
     pub fn copy_repository_to(&self, destination: &Path) -> Result<RepositoryCopyStats> {
-        let target = Storage::from_config(&crate::config::TargetConfig::Filesystem {
-            path: destination.to_path_buf(),
-        })?;
+        let target = Storage::from_config(
+            &crate::config::TargetConfig::Filesystem {
+                path: destination.to_path_buf(),
+            },
+            destination,
+        )?;
         if !target.list("")?.is_empty() {
             bail!(
                 "clone repository directory is not empty: {}",
@@ -401,13 +407,31 @@ impl Vault {
             format_version: VAULT_METADATA_VERSION,
             vault_id: config.vault.id,
             encryption: self.codec.mode(),
+            recipient: config.encryption.recipient.clone(),
         };
         if self.storage.metadata(key)?.is_some() {
             let contents = self.storage.get(key)?;
             let actual: VaultMetadata =
                 serde_json::from_slice(&contents).context("failed to parse vault metadata")?;
-            if actual != expected {
+            if actual.format_version != expected.format_version
+                || actual.vault_id != expected.vault_id
+                || actual.encryption != expected.encryption
+                || actual
+                    .recipient
+                    .as_ref()
+                    .is_some_and(|recipient| Some(recipient) != expected.recipient.as_ref())
+            {
                 bail!("vault metadata does not match the active configuration");
+            }
+            if actual.recipient.is_none() && expected.recipient.is_some() {
+                if let Some(snapshot_id) = self.latest_snapshot_id()? {
+                    self.load_manifest_by_id(&snapshot_id)?;
+                }
+                let mut encoded = serde_json::to_vec_pretty(&expected)
+                    .context("failed to encode vault metadata")?;
+                encoded.push(b'\n');
+                self.storage.put(key, &encoded, true)?;
+                self.storage.publish("Record Akeep age recipient")?;
             }
             return Ok(());
         }
@@ -415,7 +439,8 @@ impl Vault {
         let mut encoded =
             serde_json::to_vec_pretty(&expected).context("failed to encode vault metadata")?;
         encoded.push(b'\n');
-        self.storage.put(key, &encoded, false)
+        self.storage.put(key, &encoded, false)?;
+        self.storage.publish("Initialize Akeep repository")
     }
 
     fn resolve_reference(&self, reference: &str) -> Result<String> {

@@ -73,6 +73,12 @@ pub enum TargetConfig {
         #[serde(skip_serializing_if = "Option::is_none")]
         aws_cli: Option<PathBuf>,
     },
+    Git {
+        repository: String,
+        branch: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        git_cli: Option<PathBuf>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -193,6 +199,24 @@ impl Config {
                     bail!("target.aws_cli must not be empty");
                 }
             }
+            TargetConfig::Git {
+                repository,
+                branch,
+                git_cli,
+            } => {
+                if repository.is_empty() || repository.chars().any(char::is_control) {
+                    bail!("target.repository must not be empty");
+                }
+                if branch.is_empty() || branch.chars().any(char::is_whitespace) {
+                    bail!("target.branch must not be empty or contain whitespace");
+                }
+                if git_cli
+                    .as_ref()
+                    .is_some_and(|path| path.as_os_str().is_empty())
+                {
+                    bail!("target.git_cli must not be empty");
+                }
+            }
         }
         match self.encryption.mode {
             EncryptionMode::None => {
@@ -291,6 +315,51 @@ pub fn initialize(
                 state_path,
             )
         }
+        TargetConfig::Git {
+            repository,
+            branch,
+            git_cli,
+        } => {
+            let git_cli =
+                resolve_executable(git_cli.as_deref().unwrap_or_else(|| Path::new("git")))?;
+            let state_path = absolute_directory(&default_state_base()?.join(vault_id.to_string()))?;
+            (
+                TargetConfig::Git {
+                    repository,
+                    branch,
+                    git_cli: Some(git_cli),
+                },
+                state_path,
+            )
+        }
+    };
+    let vault_id = if matches!(target, TargetConfig::Git { .. }) {
+        match crate::storage::stored_vault_identity(&target, &state_path) {
+            Ok(Some((stored_id, stored_encryption, stored_recipient))) => {
+                if stored_encryption != encryption.mode {
+                    let _ = fs::remove_dir_all(&state_path);
+                    bail!(
+                        "remote vault uses {stored_encryption} encryption, but init requested {}",
+                        encryption.mode
+                    );
+                }
+                if stored_recipient
+                    .as_ref()
+                    .is_some_and(|recipient| Some(recipient) != encryption.recipient.as_ref())
+                {
+                    let _ = fs::remove_dir_all(&state_path);
+                    bail!("age identity does not unlock the existing Git vault");
+                }
+                stored_id
+            }
+            Ok(None) => vault_id,
+            Err(error) => {
+                let _ = fs::remove_dir_all(&state_path);
+                return Err(error).context("failed to inspect Git repository");
+            }
+        }
+    } else {
+        vault_id
     };
     let config = Config {
         format_version: CONFIG_FORMAT_VERSION,

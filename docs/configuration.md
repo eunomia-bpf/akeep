@@ -53,6 +53,41 @@ versioning is recommended because `refs/latest` is intentionally updated after
 each complete manifest; `akeep status` reports the versioning state when the
 account can read it.
 
+## Git vault
+
+Create an empty private GitHub Repo or another writable Git remote, then use a
+dedicated branch (the default is `akeep`):
+
+```console
+akeep init \
+  --git-repository git@github.com:OWNER/agent-history.git \
+  --git-branch akeep \
+  --encryption age
+```
+
+At initialization, Akeep resolves and stores the absolute Git executable. Use
+`--git-cli /absolute/path/to/git` to override it. Authentication remains with
+Git: use an SSH agent or an HTTPS credential helper, and do not embed access
+tokens in the repository URL.
+
+The selected branch may already contain unrelated files; Akeep owns only its
+`repository/` directory. It keeps a private local checkout in the vault state
+directory, fetches before every operation, and performs one push for each
+completed Akeep snapshot. A non-fast-forward update or rejected push leaves the
+remote's previous complete snapshot intact. The branch is single-writer: retry
+after another client advances it.
+
+To connect another machine, repeat `akeep init --git-repository ...` with the
+same branch. Akeep adopts the existing vault ID. An encrypted vault also needs
+`--encryption age --age-identity-file FILE`, where `FILE` is a separately
+transferred recovery identity.
+
+Git stores both a working tree and Git objects locally, so `akeep status`
+reserves up to twice the discovered logical input in the state-directory disk
+preflight. GitHub recommends repositories below 1 GB and enforces a 2 GB push
+limit; prefer S3/R2 for large or rapidly growing archives. See GitHub's
+[repository limits](https://docs.github.com/en/repositories/creating-and-managing-repositories/repository-limits).
+
 ## Encryption
 
 Encryption is a vault-level choice:
@@ -186,7 +221,7 @@ selected bytes but does not mark the whole commit as fully checked.
 
 ## Clone a repository
 
-Copy the active filesystem or S3 repository into a new local bundle:
+Copy the active filesystem, S3/R2, or Git repository into a new local bundle:
 
 ```console
 akeep clone /mnt/backup/akeep-copy

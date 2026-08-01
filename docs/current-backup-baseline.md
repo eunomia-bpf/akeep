@@ -35,7 +35,7 @@ there is no client-side encryption.
 | Providers | Claude, Codex, Grok, Kimi, OpenCode | Raw backup parity for all five |
 | Live SQLite | Consistent snapshots | Consistent snapshots plus integrity test |
 | Incremental transfer | AWS file-level sync | Chunk/object-level incremental |
-| Remote target | AWS S3 only | Local filesystem and S3-compatible |
+| Remote target | AWS S3 only | Local filesystem, S3/R2, and Git remote/GitHub Repo |
 | Compression | None | Streaming compression |
 | Client-side encryption | None | Optional vault mode; `none` remains fully supported |
 | Remote deletion | Never | Never |
@@ -43,7 +43,7 @@ there is no client-side encryption.
 | Manifest | Presence booleans and timestamp | Versioned file/object hashes and adapter metadata |
 | Integrity | Bucket reachability | Full manifest/object/content `fsck` |
 | Recovery | Download current prefix to scratch | Checkout any commit, hash every file, report conflicts |
-| Repository copy | Standard AWS tooling | Exact local/S3-to-local `clone` bundle |
+| Repository copy | Standard AWS tooling | Exact local/S3/Git-to-local `clone` bundle |
 | Provider restore test | Manual/not encoded | Automated isolated smoke test for Claude and Codex |
 | Cross-agent handoff | None | Reviewed semantic handoff bundle |
 
