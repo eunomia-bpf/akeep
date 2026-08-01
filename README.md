@@ -41,15 +41,17 @@ Akeep is designed around five promises:
 
 ## Install
 
-Install the checksummed GitHub Release binary on Linux or macOS:
+Download a ready-to-run archive for your platform from
+[GitHub Releases](https://github.com/eunomia-bpf/akeep/releases). On Linux or
+macOS, the one-line installer downloads the matching binary and verifies its
+checksum:
 
 ```console
 curl -fsSL https://github.com/eunomia-bpf/akeep/releases/download/v0.1.0-alpha.1/install.sh | sh -s -- v0.1.0-alpha.1
 ```
 
-The installer detects x86_64/ARM64, verifies `SHA256SUMS`, and writes to
-`~/.local/bin` unless `AKEEP_INSTALL_DIR` is set. Alternatively, install the
-same version from crates.io:
+The installer detects x86_64/ARM64 and writes to `~/.local/bin` unless
+`AKEEP_INSTALL_DIR` is set. Rust users can instead install from crates.io:
 
 ```console
 cargo install akeep --version 0.1.0-alpha.1 --locked
@@ -57,13 +59,9 @@ cargo install akeep --version 0.1.0-alpha.1 --locked
 
 ## Usage
 
-Build and exercise the current source checkout:
+Initialize a repository and exercise the core version-history loop:
 
 ```console
-git clone https://github.com/eunomia-bpf/akeep
-cd akeep
-cargo install --path . --locked
-
 akeep init
 akeep status
 akeep commit -m "before the migration"
@@ -75,9 +73,6 @@ akeep fsck HEAD
 akeep checkout HEAD --to /tmp/akeep-recovery
 akeep checkout HEAD --provider claude-code --to /tmp/akeep-claude-drill
 akeep clone /mnt/backup/akeep-copy
-akeep index rebuild
-akeep search "database migration"
-akeep export HEAD --format markdown --to recovery-point.md
 akeep schedule install --weekly
 akeep schedule status
 ```
