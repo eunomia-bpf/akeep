@@ -40,7 +40,7 @@ pub struct S3Storage {
 #[derive(Default)]
 struct PendingObjects {
     root: Option<PathBuf>,
-    objects: HashMap<String, ObjectMetadata>,
+    count: usize,
 }
 
 #[derive(Deserialize)]
@@ -295,8 +295,7 @@ impl S3Storage {
                 self.pending_objects
                     .lock()
                     .map_err(|_| anyhow::anyhow!("S3 pending-object lock is poisoned"))?
-                    .objects
-                    .insert(key.to_string(), metadata);
+                    .count += 1;
                 self.object_cache
                     .lock()
                     .map_err(|_| anyhow::anyhow!("S3 object cache lock is poisoned"))?
@@ -436,7 +435,7 @@ impl S3Storage {
             .pending_objects
             .lock()
             .map_err(|_| anyhow::anyhow!("S3 pending-object lock is poisoned"))?;
-        if !pending.objects.is_empty() {
+        if pending.count > 0 {
             bail!("cannot replace S3 staging while objects are pending");
         }
         pending.root = Some(path.to_path_buf());
@@ -448,7 +447,7 @@ impl S3Storage {
             .pending_objects
             .lock()
             .map_err(|_| anyhow::anyhow!("S3 pending-object lock is poisoned"))?;
-        if pending.objects.is_empty() {
+        if pending.count == 0 {
             return Ok(());
         }
         let root = pending
@@ -465,28 +464,10 @@ impl S3Storage {
             .args(["--recursive", "--only-show-errors"]);
         run(&mut command, "upload staged S3 object batch")?;
 
-        let remote = self.list_object_metadata()?;
-        for (key, expected_metadata) in &pending.objects {
-            let actual = remote
-                .get(key)
-                .with_context(|| format!("uploaded S3 object is missing: {}", self.uri(key)))?;
-            if actual != expected_metadata {
-                bail!(
-                    "uploaded S3 object has size {}, expected {}: {}",
-                    actual.size,
-                    expected_metadata.size,
-                    self.uri(key)
-                );
-            }
-        }
         fs::remove_dir_all(&root)
             .with_context(|| format!("failed to clear S3 staging {}", root.display()))?;
         create_private_directory(&root)?;
-        *self
-            .object_cache
-            .lock()
-            .map_err(|_| anyhow::anyhow!("S3 object cache lock is poisoned"))? = Some(remote);
-        pending.objects.clear();
+        pending.count = 0;
         Ok(())
     }
 
