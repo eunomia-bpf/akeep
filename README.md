@@ -39,14 +39,30 @@ Akeep is designed around five promises:
 - **Non-destructive:** commits never edit provider state, and checkout defaults
   to a separate scratch directory.
 
+## Install
+
+Install the checksummed GitHub Release binary on Linux or macOS:
+
+```console
+curl -fsSL https://github.com/eunomia-bpf/akeep/releases/download/v0.1.0-alpha.1/install.sh | sh -s -- v0.1.0-alpha.1
+```
+
+The installer detects x86_64/ARM64, verifies `SHA256SUMS`, and writes to
+`~/.local/bin` unless `AKEEP_INSTALL_DIR` is set. Alternatively, install the
+same version from crates.io:
+
+```console
+cargo install akeep --version 0.1.0-alpha.1 --locked
+```
+
 ## Usage
 
-Build and exercise the current local CLI:
+Build and exercise the current source checkout:
 
 ```console
 git clone https://github.com/eunomia-bpf/akeep
 cd akeep
-cargo install --path .
+cargo install --path . --locked
 
 akeep init
 akeep status

@@ -25,5 +25,6 @@ or recoverability was affected.
 - Losing every copy of an age identity is permanent data loss. Akeep has no
   escrow or recovery service.
 
-Supported versions will be listed here after the first tagged release. Until
-then, security fixes land on `main`.
+The latest `0.1.0-alpha.*` release and `main` receive security fixes. Alpha
+archives remain readable across patch releases unless release notes explicitly
+document a migration.

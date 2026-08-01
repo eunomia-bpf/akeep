@@ -5,6 +5,8 @@ the first release is tagged.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.1] - 2026-07-31
+
 ### Added
 
 - Git-like agent-history commits with optional messages, parent links, `HEAD`
@@ -34,6 +36,12 @@ the first release is tagged.
   `CLAUDE_HOME` alias.
 - Early private staging for rotating shell/task state, preventing an active
   provider from deleting a discovered file during a long first backup.
+- Four-worker bounded commit/fsck/checkout execution with RAM, CPU, and disk
+  preflight reporting.
+- Bounded S3 object staging and recursive batch uploads, replacing one AWS CLI
+  process per new content object without changing the archive format.
+- Native Linux x86_64/ARM64 and macOS Intel/Apple Silicon release archives,
+  checksums, provenance attestations, and public-artifact install smoke tests.
 
 ### Changed
 
@@ -44,4 +52,5 @@ the first release is tagged.
 - Product positioning now leads with privacy-first version history for agents;
   integrity checks and exact recovery remain core mechanisms.
 
-[Unreleased]: https://github.com/eunomia-bpf/akeep/commits/main
+[Unreleased]: https://github.com/eunomia-bpf/akeep/compare/v0.1.0-alpha.1...HEAD
+[0.1.0-alpha.1]: https://github.com/eunomia-bpf/akeep/releases/tag/v0.1.0-alpha.1

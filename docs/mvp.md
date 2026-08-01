@@ -266,6 +266,15 @@ This is evidence for one current commit, not a substitute for the
 remaining 14-day and week-old recovery gates. The previous backup timer remains
 enabled.
 
+On 2026-08-01 UTC, the optimized bounded pipeline committed 53,259 files and
+60,730,326,091 logical bytes to the real S3 vault. It added 391 objects
+(165,347,103 stored bytes), peaked at 249,128 KiB RSS, consumed 243.7 CPU
+seconds, and completed in 236.4 seconds. This reduced observed peak memory by
+about 99% from the earlier 23.6 GiB process-tree peak. A prior old-pipeline
+incremental run took 667.6 CPU seconds and 510.8 wall-clock seconds. These were
+successive live workloads, not a controlled benchmark; both preserved the same
+archive format and recovery semantics.
+
 ## 7. Implementation shape
 
 Start with one repository and one binary. Rust is the current recommendation

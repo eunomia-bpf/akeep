@@ -85,6 +85,26 @@ Run `akeep status` after editing. Its JSON form is suitable for monitoring:
 akeep status --json
 ```
 
+## Resource controls
+
+`akeep status` reports available RAM and staging/target disk space before a
+commit. It blocks work that cannot preserve a 256 MiB safety reserve or fit the
+estimated bounded archive buffers. The default archive pool has four workers;
+override it in the configuration only after measuring the machine:
+
+```toml
+[archive]
+chunk_size = 4194304
+compression_level = 3
+workers = 2
+```
+
+Commit, full `fsck`, and checkout share this worker bound. S3 commits stage at
+most 512 MiB of ordinary source files per batch (or one larger file), then use
+one recursive AWS CLI upload instead of starting a process per object. The
+manifest is still published last, after one final remote inventory and size
+check. Existing configurations without `workers` continue to use four.
+
 For temporary or isolated runs, Akeep also honors provider environment
 variables. Explicit `[sources]` values take precedence. Claude Code uses
 `CLAUDE_CONFIG_DIR`; the older `CLAUDE_HOME` alias remains accepted for Akeep

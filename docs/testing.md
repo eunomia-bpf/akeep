@@ -44,7 +44,14 @@ The suite covers:
 - search, exact JSON/base64 export, Markdown export, and semantic handoff.
 
 The fake S3 CLI exercises the same process boundary and object contract as the
-real backend while keeping CI offline and deterministic.
+real backend while keeping CI offline and deterministic. It also asserts that a
+multi-chunk commit uses one recursive object-batch upload instead of one AWS CLI
+process per chunk.
+
+The release workflow builds native Linux x86_64/ARM64 and macOS Intel/Apple
+Silicon archives, attests them, publishes checksums, downloads each public
+artifact on its matching architecture, and runs `init`, `commit`, and `fsck`.
+It separately installs the tagged version from crates.io.
 
 For a short end-to-end demonstration:
 
@@ -90,3 +97,15 @@ passes. Akeep's code can be release-ready before enough wall-clock evidence
 exists to replace that service. The checklist records dated, non-secret
 shadow-run evidence; bucket names, account details, source paths, and session
 content must never be committed.
+
+## Performance baseline
+
+The optimized 2026-08-01 real S3 dogfood commit covered 53,259 files and
+60,730,326,091 logical bytes. With four workers and staged recursive uploads it
+added 391 objects (165,347,103 stored bytes), used 249,128 KiB peak RSS, 243.7
+CPU seconds, and 236.4 wall-clock seconds. An earlier full run of the old
+pipeline reached a 23.6 GiB process-tree peak; its later 56.3 GB incremental run
+used 667.6 CPU seconds and 510.8 wall-clock seconds. These are real successive
+workloads rather than a controlled microbenchmark, but they establish the
+operational resource envelope. Archive format, chunk hashes, compression,
+encryption, S3 keys, and recovery semantics did not change.
