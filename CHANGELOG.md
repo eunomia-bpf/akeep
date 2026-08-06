@@ -4,6 +4,19 @@ All notable changes are documented here. Akeep follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- AgentSight provider for weekly `~/.agentsight/monitor/monitor-*.db` databases,
+  with SQLite online-backup snapshots for live WAL databases and a privacy-safe
+  per-commit `agentsight/activity-summary.json` rollup.
+- Activity summary schema v2: downsampled activity time series (with concurrent
+  sessions by agent type), capped per-session rows with a gap-free CPU shape,
+  and a ranked program histogram from process sample basenames. Existing v1
+  aggregate fields are preserved; `schema_parts` reports which tables were
+  actually readable so “no activity” is distinct from “could not read it”.
+  Per-session `cpu_shape` uses natural window count when shorter than the
+  downsample target (no zero-padding) so sparklines stay faithful.
+
 ## [0.2.0] - 2026-08-01
 
 ### Added

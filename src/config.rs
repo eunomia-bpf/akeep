@@ -104,6 +104,8 @@ pub struct EncryptionConfig {
 #[serde(deny_unknown_fields)]
 pub struct SourceOverrides {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub agentsight_home: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub claude_home: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub codex_home: Option<PathBuf>,

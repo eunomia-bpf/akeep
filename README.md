@@ -97,7 +97,7 @@ akeep --config /mnt/backup/akeep-copy/config.toml fsck HEAD
 For an encrypted repository, the clone keeps the configured identity path but
 does not copy the private age identity. Move or back up that key separately.
 
-Run the self-contained trust demo with synthetic five-provider fixtures:
+Run the self-contained trust demo with synthetic multi-provider fixtures:
 
 ```console
 cargo build
@@ -211,7 +211,7 @@ migrating from another backup, keep both running until Akeep has completed
 several scheduled commits and you have recovered both a current and an older
 commit. This avoids creating a coverage gap while changing backup systems.
 
-Our own installation protects more than 50 GB across five agent providers. A
+Our own installation protects more than 50 GB across agent providers. A
 full recovery reproduced every archived file and byte, recovered SQLite
 databases passed integrity checks, and the bounded pipeline reduced observed
 peak memory from 23.6 GiB to about 243 MiB. The dated evidence and conservative
@@ -235,6 +235,13 @@ provider discovery, bounded streaming commits, compression and deduplication,
 optional age encryption, history and diffs, full integrity checks, exact
 scratch recovery, repository cloning, and Linux scheduled commits. See the
 compatibility matrix for the provider data included by each adapter.
+
+Supported providers include Claude Code, Codex CLI, Grok CLI, Kimi Code,
+OpenCode, and AgentSight (weekly monitor SQLite databases plus a privacy-safe
+`agentsight/activity-summary.json` rollup for dashboards — aggregates, a
+downsampled activity series, capped per-session CPU shapes, and a program
+basename histogram; never paths, command lines, or hostnames). Field-level
+detail is in [docs/providers.md](docs/providers.md).
 
 ## License
 

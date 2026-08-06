@@ -33,6 +33,7 @@ fn archives_and_recovers_a_multichunk_scale_fixture_incrementally() {
         .success();
     let mut active = akeep::config::Config::load(&config).unwrap();
     active.archive.chunk_size = MIB as u64;
+    active.sources.agentsight_home = Some(temp.path().join("missing-agentsight"));
     active.sources.claude_home = Some(claude);
     active.sources.codex_home = Some(temp.path().join("missing-codex"));
     active.sources.grok_home = Some(temp.path().join("missing-grok"));

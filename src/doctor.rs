@@ -574,6 +574,7 @@ mod tests {
         fs::write(claude.join("projects/demo/session.jsonl"), b"hello").unwrap();
 
         let mut config = sample_config(target);
+        config.sources.agentsight_home = Some(temp.path().join("missing-agentsight"));
         config.sources.claude_home = Some(claude);
         config.sources.codex_home = Some(temp.path().join("missing-codex"));
         config.sources.grok_home = Some(temp.path().join("missing-grok"));
@@ -583,11 +584,21 @@ mod tests {
 
         let report = inspect(Path::new("/config.toml"), &config);
         assert!(report.healthy);
-        let claude = &report.providers[0];
+        let claude = report
+            .providers
+            .iter()
+            .find(|entry| entry.provider == Provider::ClaudeCode)
+            .unwrap();
         assert!(claude.present);
         assert_eq!(claude.file_count, 1);
         assert_eq!(claude.logical_bytes, 5);
-        assert!(report.providers[1..].iter().all(|entry| !entry.present));
+        assert!(
+            report
+                .providers
+                .iter()
+                .filter(|entry| entry.provider != Provider::ClaudeCode)
+                .all(|entry| !entry.present)
+        );
     }
 
     #[test]
@@ -597,6 +608,7 @@ mod tests {
         let target = claude.join("vault");
         fs::create_dir_all(&target).unwrap();
         let mut config = sample_config(target);
+        config.sources.agentsight_home = Some(temp.path().join("missing-agentsight"));
         config.sources.claude_home = Some(claude);
         config.sources.codex_home = Some(temp.path().join("missing-codex"));
         config.sources.grok_home = Some(temp.path().join("missing-grok"));

@@ -26,6 +26,7 @@ fn doctor_reports_discovered_providers_as_json() {
         .success();
 
     let mut config = akeep::config::Config::load(&config_path).unwrap();
+    config.sources.agentsight_home = Some(temp.path().join("missing-agentsight"));
     config.sources.claude_home = Some(claude);
     config.sources.codex_home = Some(temp.path().join("missing-codex"));
     config.sources.grok_home = Some(temp.path().join("missing-grok"));
@@ -74,6 +75,7 @@ fn doctor_fails_when_target_overlaps_a_source() {
         .success();
 
     let mut config = akeep::config::Config::load(&config_path).unwrap();
+    config.sources.agentsight_home = Some(temp.path().join("missing-agentsight"));
     config.sources.claude_home = Some(claude);
     config.sources.codex_home = Some(temp.path().join("missing-codex"));
     config.sources.grok_home = Some(temp.path().join("missing-grok"));

@@ -440,6 +440,7 @@ fn age_vault_encrypts_objects_and_manifests_and_recovers() {
     let mut config = akeep::config::Config::load(&config_path).unwrap();
     let identity = config.encryption.identity_file.clone().unwrap();
     config.archive.chunk_size = 4;
+    config.sources.agentsight_home = Some(temp.path().join("missing-agentsight"));
     config.sources.claude_home = Some(claude);
     config.sources.codex_home = Some(temp.path().join("missing-codex"));
     config.sources.grok_home = Some(temp.path().join("missing-grok"));
@@ -869,6 +870,7 @@ impl Fixture {
 
         let mut active = akeep::config::Config::load(&config).unwrap();
         active.archive.chunk_size = 4;
+        active.sources.agentsight_home = Some(temp.path().join("missing-agentsight"));
         active.sources.claude_home = Some(claude.clone());
         active.sources.codex_home = Some(temp.path().join("missing-codex"));
         active.sources.grok_home = Some(temp.path().join("missing-grok"));

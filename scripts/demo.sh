@@ -17,6 +17,7 @@ trap cleanup_demo EXIT
 
 run_akeep() {
     env \
+        AGENTSIGHT_HOME="$AKEEP_DEMO_ROOT/agentsight" \
         CLAUDE_CONFIG_DIR="$AKEEP_DEMO_ROOT/claude" \
         CODEX_HOME="$AKEEP_DEMO_ROOT/codex" \
         GROK_HOME="$AKEEP_DEMO_ROOT/grok" \
@@ -27,6 +28,7 @@ run_akeep() {
 }
 
 mkdir -p \
+    "$AKEEP_DEMO_ROOT/agentsight/monitor" \
     "$AKEEP_DEMO_ROOT/claude/projects/demo" \
     "$AKEEP_DEMO_ROOT/codex/sessions" \
     "$AKEEP_DEMO_ROOT/grok/sessions" \
@@ -44,11 +46,60 @@ printf '%s\n' '{"message":"kimi fixture"}' \
     > "$AKEEP_DEMO_ROOT/kimi/sessions/session.jsonl"
 printf '%s\n' '{"message":"opencode fixture"}' \
     > "$AKEEP_DEMO_ROOT/opencode-share/storage/session.json"
+# Create a minimal AgentSight weekly monitor DB for discovery/demo coverage.
+python3 - "$AKEEP_DEMO_ROOT/agentsight/monitor/monitor-2026-W01.db" <<'PY'
+import sqlite3, sys
+path = sys.argv[1]
+conn = sqlite3.connect(path)
+conn.executescript("""
+CREATE TABLE tracked_sessions (
+    session_id TEXT NOT NULL,
+    display_id TEXT NOT NULL,
+    agent_type TEXT NOT NULL,
+    root_pid INTEGER NOT NULL,
+    root_starttime_ticks INTEGER NOT NULL,
+    first_seen_ms INTEGER NOT NULL,
+    last_seen_ms INTEGER NOT NULL,
+    match_evidence TEXT NOT NULL,
+    match_confidence REAL NOT NULL,
+    session_path TEXT,
+    command TEXT NOT NULL,
+    cwd TEXT,
+    status TEXT NOT NULL,
+    PRIMARY KEY (session_id, root_pid, root_starttime_ticks)
+);
+CREATE TABLE monitor_windows (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    root_pid INTEGER NOT NULL,
+    root_starttime_ticks INTEGER NOT NULL,
+    window_start_ms INTEGER NOT NULL,
+    window_end_ms INTEGER NOT NULL,
+    process_count INTEGER NOT NULL,
+    cpu_ms INTEGER NOT NULL,
+    rss_bytes INTEGER NOT NULL,
+    read_bytes INTEGER NOT NULL,
+    write_bytes INTEGER NOT NULL,
+    file_targets INTEGER NOT NULL,
+    network_targets INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO tracked_sessions VALUES (
+    'demo-1', 'claude:demo', 'claude', 1, 1,
+    1000, 2000, 'proc_fd', 1.0, NULL, 'claude', NULL, 'ended'
+);
+INSERT INTO monitor_windows (
+    session_id, root_pid, root_starttime_ticks, window_start_ms, window_end_ms,
+    process_count, cpu_ms, rss_bytes, read_bytes, write_bytes, file_targets, network_targets
+) VALUES ('demo-1', 1, 1, 1000, 2000, 1, 10, 1024, 0, 0, 0, 0);
+""")
+conn.commit()
+conn.close()
+PY
 
 printf '%s\n' '==> Initialize a local plaintext demo vault'
 "$AKEEP_DEMO_BIN" --config "$AKEEP_DEMO_CONFIG" init --target "$AKEEP_DEMO_VAULT"
 
-printf '%s\n' '==> Discover five providers'
+printf '%s\n' '==> Discover six providers'
 run_akeep status
 
 printf '%s\n' '==> Commit two versions, diff, check, and restore'
@@ -76,6 +127,15 @@ cmp \
 cmp \
     "$AKEEP_DEMO_ROOT/opencode-share/storage/session.json" \
     "$AKEEP_DEMO_RECOVERY/opencode/storage/session.json"
+test -f "$AKEEP_DEMO_RECOVERY/agentsight/activity-summary.json"
+python3 - "$AKEEP_DEMO_RECOVERY/agentsight/monitor/monitor-2026-W01.db" <<'PY'
+import sqlite3, sys
+conn = sqlite3.connect(sys.argv[1])
+assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+assert conn.execute("SELECT COUNT(*) FROM tracked_sessions").fetchone()[0] == 1
+conn.close()
+print("PASS: recovered AgentSight monitor snapshot is a valid SQLite database")
+PY
 printf '%s\n' 'PASS: recovered provider-native files match every source byte'
 
 printf '%s\n' '==> Clone the repository and check the independent bundle'

@@ -88,6 +88,7 @@ impl Fixture {
             .success();
         let mut active = akeep::config::Config::load(&config).unwrap();
         active.archive.chunk_size = 8;
+        active.sources.agentsight_home = Some(temp.path().join("missing-agentsight"));
         active.sources.claude_home = Some(claude.clone());
         active.sources.codex_home = Some(temp.path().join("missing-codex"));
         active.sources.grok_home = Some(temp.path().join("missing-grok"));

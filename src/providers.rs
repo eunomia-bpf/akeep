@@ -1,5 +1,6 @@
 use std::env;
 use std::fmt;
+use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -15,6 +16,7 @@ use crate::config::Config;
 #[serde(rename_all = "kebab-case")]
 #[value(rename_all = "kebab-case")]
 pub enum Provider {
+    AgentSight,
     ClaudeCode,
     Codex,
     Grok,
@@ -25,7 +27,8 @@ pub enum Provider {
 impl Provider {
     pub const ADAPTER_VERSION: u32 = 1;
 
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
+        Self::AgentSight,
         Self::ClaudeCode,
         Self::Codex,
         Self::Grok,
@@ -35,6 +38,7 @@ impl Provider {
 
     pub fn id(self) -> &'static str {
         match self {
+            Self::AgentSight => "agentsight",
             Self::ClaudeCode => "claude-code",
             Self::Codex => "codex",
             Self::Grok => "grok",
@@ -45,6 +49,7 @@ impl Provider {
 
     pub fn display_name(self) -> &'static str {
         match self {
+            Self::AgentSight => "AgentSight",
             Self::ClaudeCode => "Claude Code",
             Self::Codex => "Codex CLI",
             Self::Grok => "Grok CLI",
@@ -91,6 +96,11 @@ pub fn specifications(config: &Config) -> Result<Vec<ProviderSpec>> {
     let xdg_data = base.data_local_dir();
     let xdg_state = state_home(home);
 
+    let agentsight = configured_path(
+        config.sources.agentsight_home.as_ref(),
+        &["AGENTSIGHT_HOME"],
+        home.join(".agentsight"),
+    );
     let claude = configured_path(
         config.sources.claude_home.as_ref(),
         &["CLAUDE_CONFIG_DIR", "CLAUDE_HOME"],
@@ -123,6 +133,7 @@ pub fn specifications(config: &Config) -> Result<Vec<ProviderSpec>> {
     );
 
     Ok(vec![
+        agentsight_spec(agentsight),
         claude_spec(claude),
         codex_spec(codex),
         grok_spec(grok),
@@ -164,6 +175,73 @@ fn item(
         source_path: root.join(relative),
         logical_path: format!("{}/{relative}", provider.id()),
     }
+}
+
+fn agentsight_spec(root: PathBuf) -> ProviderSpec {
+    let provider = Provider::AgentSight;
+    let monitor_dir = root.join("monitor");
+    let mut items = Vec::new();
+    if let Ok(entries) = fs::read_dir(&monitor_dir) {
+        let mut names = Vec::new();
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if !is_monitor_db_name(name) {
+                continue;
+            }
+            let Ok(metadata) = entry.metadata() else {
+                continue;
+            };
+            if !metadata.is_file() {
+                continue;
+            }
+            names.push(name.to_string());
+        }
+        names.sort();
+        for name in names {
+            items.push(item(
+                provider,
+                &root,
+                &format!("monitor/{name}"),
+                SourceKind::Sqlite,
+            ));
+        }
+    }
+
+    ProviderSpec {
+        provider,
+        roots: vec![root.clone()],
+        items,
+        excluded: paths(
+            &root,
+            &[
+                "monitor/monitor.pid",
+                "monitor/monitor.lock",
+                "monitor/monitor.db-journal",
+            ],
+        ),
+    }
+}
+
+/// Weekly AgentSight monitor databases: `monitor-YYYY-Www.db`.
+/// Sidecars (`-wal`, `-shm`, `-journal`) and other non-durable files are excluded.
+fn is_monitor_db_name(name: &str) -> bool {
+    let Some(stem) = name.strip_prefix("monitor-") else {
+        return false;
+    };
+    let Some(stem) = stem.strip_suffix(".db") else {
+        return false;
+    };
+    // Reject accidental matches like monitor-foo.db-wal via strip_suffix already.
+    // Require a non-empty ISO-week-like stem; keep the check permissive for future naming.
+    !stem.is_empty()
+        && !stem.contains('/')
+        && !stem.contains('\\')
+        && !name.ends_with("-journal")
+        && !name.ends_with("-wal")
+        && !name.ends_with("-shm")
 }
 
 fn claude_spec(root: PathBuf) -> ProviderSpec {
@@ -366,6 +444,7 @@ mod tests {
     fn overrides_all_provider_roots() {
         let mut config = sample_config();
         config.sources = SourceOverrides {
+            agentsight_home: Some(PathBuf::from("/sources/agentsight")),
             claude_home: Some(PathBuf::from("/sources/claude")),
             codex_home: Some(PathBuf::from("/sources/codex")),
             grok_home: Some(PathBuf::from("/sources/grok")),
@@ -376,9 +455,10 @@ mod tests {
 
         let specs = specifications(&config).unwrap();
         assert_eq!(specs.len(), Provider::ALL.len());
-        assert_eq!(specs[0].roots, vec![PathBuf::from("/sources/claude")]);
+        assert_eq!(specs[0].roots, vec![PathBuf::from("/sources/agentsight")]);
+        assert_eq!(specs[1].roots, vec![PathBuf::from("/sources/claude")]);
         assert_eq!(
-            specs[4].roots,
+            specs[5].roots,
             vec![
                 PathBuf::from("/sources/opencode/share"),
                 PathBuf::from("/sources/opencode/state")
@@ -407,6 +487,77 @@ mod tests {
                 .iter()
                 .all(|entry| !entry.source_path.ends_with("auth.json"))
         );
+    }
+
+    #[test]
+    fn agentsight_discovers_weekly_monitor_dbs_and_excludes_pid() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path().join("agentsight");
+        let monitor = root.join("monitor");
+        fs::create_dir_all(&monitor).unwrap();
+        fs::write(monitor.join("monitor-2026-W25.db"), b"sqlite").unwrap();
+        fs::write(monitor.join("monitor-2026-W26.db"), b"sqlite").unwrap();
+        fs::write(monitor.join("monitor-2026-W25.db-wal"), b"wal").unwrap();
+        fs::write(monitor.join("monitor-2026-W25.db-shm"), b"shm").unwrap();
+        fs::write(monitor.join("monitor.pid"), b"1234").unwrap();
+        fs::write(monitor.join("other.db"), b"nope").unwrap();
+
+        let mut config = sample_config();
+        config.sources.agentsight_home = Some(root.clone());
+        let specs = specifications(&config).unwrap();
+        let agentsight = specs
+            .iter()
+            .find(|spec| spec.provider == Provider::AgentSight)
+            .unwrap();
+
+        assert_eq!(agentsight.roots, vec![root.clone()]);
+        assert_eq!(agentsight.items.len(), 2);
+        assert_eq!(
+            agentsight.items[0].logical_path,
+            "agentsight/monitor/monitor-2026-W25.db"
+        );
+        assert_eq!(
+            agentsight.items[1].logical_path,
+            "agentsight/monitor/monitor-2026-W26.db"
+        );
+        assert!(
+            agentsight
+                .items
+                .iter()
+                .all(|item| item.kind == SourceKind::Sqlite)
+        );
+        assert!(agentsight.excluded.contains(&monitor.join("monitor.pid")));
+        assert!(
+            agentsight
+                .items
+                .iter()
+                .all(|item| !item.source_path.ends_with("monitor.pid")
+                    && !item.logical_path.contains("-wal")
+                    && !item.logical_path.contains("-shm"))
+        );
+    }
+
+    #[test]
+    fn agentsight_absent_home_contributes_nothing() {
+        let mut config = sample_config();
+        config.sources.agentsight_home = Some(PathBuf::from("/missing/agentsight"));
+        let specs = specifications(&config).unwrap();
+        let agentsight = specs
+            .iter()
+            .find(|spec| spec.provider == Provider::AgentSight)
+            .unwrap();
+        assert!(agentsight.items.is_empty());
+    }
+
+    #[test]
+    fn monitor_db_name_filter() {
+        assert!(is_monitor_db_name("monitor-2026-W25.db"));
+        assert!(!is_monitor_db_name("monitor-2026-W25.db-wal"));
+        assert!(!is_monitor_db_name("monitor-2026-W25.db-shm"));
+        assert!(!is_monitor_db_name("monitor-2026-W25.db-journal"));
+        assert!(!is_monitor_db_name("monitor.pid"));
+        assert!(!is_monitor_db_name("other.db"));
+        assert!(!is_monitor_db_name("monitor-.db"));
     }
 
     fn sample_config() -> Config {

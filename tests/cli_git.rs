@@ -251,6 +251,7 @@ fn isolated_command(root: impl AsRef<Path>, config: &Path) -> Command {
     let mut command = Command::cargo_bin("akeep").unwrap();
     command
         .env("XDG_STATE_HOME", root.join("state-home"))
+        .env("AGENTSIGHT_HOME", root.join("missing-agentsight"))
         .env("CODEX_HOME", root.join("missing-codex"))
         .env("GROK_HOME", root.join("missing-grok"))
         .env("KIMI_CODE_HOME", root.join("missing-kimi"))

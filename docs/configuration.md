@@ -119,6 +119,7 @@ The `[sources]` section can override discovery roots:
 
 ```toml
 [sources]
+agentsight_home = "/home/me/.agentsight"
 claude_home = "/home/me/.claude"
 codex_home = "/home/me/.codex"
 grok_home = "/home/me/.grok"
@@ -156,8 +157,8 @@ check. Existing configurations without `workers` continue to use four.
 For temporary or isolated runs, Akeep also honors provider environment
 variables. Explicit `[sources]` values take precedence. Claude Code uses
 `CLAUDE_CONFIG_DIR`; the older `CLAUDE_HOME` alias remains accepted for Akeep
-compatibility. Codex uses `CODEX_HOME`; the other adapters accept `GROK_HOME`,
-`KIMI_CODE_HOME`, `OPENCODE_SHARE_DIR`, and `OPENCODE_STATE_DIR`.
+compatibility. Codex uses `CODEX_HOME`; the other adapters accept `AGENTSIGHT_HOME`,
+`GROK_HOME`, `KIMI_CODE_HOME`, `OPENCODE_SHARE_DIR`, and `OPENCODE_STATE_DIR`.
 
 ## Everyday version history
 
