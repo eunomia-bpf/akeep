@@ -1180,7 +1180,7 @@ fn assemble_session_rows(
         rows.truncate(SESSION_ROWS_CAP);
     }
     // Stable presentation: most recent first within the capped set.
-    rows.sort_by(|a, b| b.last_seen_ms.cmp(&a.last_seen_ms));
+    rows.sort_by_key(|row| std::cmp::Reverse(row.last_seen_ms));
 
     let included = rows.len() as u64;
     SessionRowsSummary {
