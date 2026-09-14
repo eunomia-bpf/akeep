@@ -31,7 +31,7 @@ tempfile = "3.20"
 toml = "1.1"
 uuid = { version = "1.18", features = ["serde", "v4"] }
 walkdir = "2.5"
-zstd = "0.13"
+zstd = "0.14"
 
 [dev-dependencies]
 assert_cmd = "2.0"
