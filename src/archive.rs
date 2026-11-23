@@ -947,8 +947,19 @@ fn apply_metadata(path: &Path, record: &FileRecord) -> Result<()> {
     if let (Some(seconds), Some(nanos)) =
         (record.modified_unix_seconds, record.modified_subsec_nanos)
     {
-        let modified = FileTime::from_unix_time(seconds, nanos);
-        filetime::set_file_mtime(path, modified)
+        // `filetime::set_file_mtime` is deprecated once `std::fs::FileTimes`
+        // exists; convert through `SystemTime` and set it on the handle.
+        // `FileTime -> SystemTime` keeps a pre-1970 timestamp's sign, which a
+        // `Duration::from_secs(seconds as u64)` would lose.
+        let modified = std::time::SystemTime::from(FileTime::from_unix_time(seconds, nanos));
+        let file = OpenOptions::new()
+            .write(true)
+            .open(path)
+            .or_else(|_| File::open(path))
+            .with_context(|| {
+                format!("failed to open {} to restore its timestamp", path.display())
+            })?;
+        file.set_times(fs::FileTimes::new().set_modified(modified))
             .with_context(|| format!("failed to restore timestamp on {}", path.display()))?;
     }
     Ok(())
